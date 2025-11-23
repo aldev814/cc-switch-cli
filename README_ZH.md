@@ -1,6 +1,6 @@
 <div align="center">
 
-# CC-Switch CLI 
+# CC-Switch CLI
 
 [![Version](https://img.shields.io/badge/version-4.0.0--cli-blue.svg)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
@@ -10,6 +10,8 @@
 **Claude Code、Codex 与 Gemini CLI 的命令行管理工具**
 
 统一管理 Claude Code、Codex 与 Gemini CLI 的供应商配置、MCP 服务器、Skills 扩展和系统提示词。
+
+[English](README.md) | [中文](README_ZH.md)
 
 </div>
 

@@ -11,6 +11,8 @@
 
 Unified management for Claude Code, Codex & Gemini CLI provider configurations, MCP servers, Skills extensions, and system prompts.
 
+[English](README.md) | [中文](README_ZH.md)
+
 </div>
 
 ---
