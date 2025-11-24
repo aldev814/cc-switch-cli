@@ -4,7 +4,7 @@ use crate::app_config::AppType;
 use crate::cli::i18n::texts;
 use crate::cli::ui::{create_table, error, highlight, info, success};
 use crate::error::AppError;
-use crate::services::ProviderService;
+use crate::services::{ProviderService, SpeedtestService};
 use crate::store::AppState;
 
 use super::utils::{get_state, pause};
@@ -62,8 +62,7 @@ pub fn manage_providers_menu(app_type: &AppType) -> Result<(), AppError> {
             .map_err(|_| AppError::Message("Selection cancelled".to_string()))?;
 
         if choice == texts::view_current_provider() {
-            view_current_provider(&state, app_type, &current_id)?;
-            pause();
+            view_provider_detail(&state, app_type, &current_id)?;
         } else if choice == texts::switch_provider() {
             switch_provider_interactive(&state, app_type, &providers, &current_id)?;
         } else if choice == texts::add_provider() {
@@ -78,65 +77,148 @@ pub fn manage_providers_menu(app_type: &AppType) -> Result<(), AppError> {
     Ok(())
 }
 
-fn view_current_provider(
+fn view_provider_detail(
     state: &AppState,
     app_type: &AppType,
     current_id: &str,
 ) -> Result<(), AppError> {
-    let providers = ProviderService::list(state, app_type.clone())?;
-    if let Some(provider) = providers.get(current_id) {
-        println!("\n{}", highlight(texts::current_provider_details()));
-        println!("{}", "═".repeat(60));
+    loop {
+        let providers = ProviderService::list(state, app_type.clone())?;
+        if let Some(provider) = providers.get(current_id) {
+            println!("\n{}", highlight(texts::current_provider_details()));
+            println!("{}", "═".repeat(60));
 
-        // 基本信息
-        println!("\n{}", highlight("基本信息 / Basic Info"));
-        println!("  ID:       {}", current_id);
-        println!("  名称:     {}", provider.name);
-        println!("  应用:     {}", app_type.as_str());
+            // 基本信息
+            println!("\n{}", highlight("基本信息 / Basic Info"));
+            println!("  ID:       {}", current_id);
+            println!("  名称:     {}", provider.name);
+            println!("  应用:     {}", app_type.as_str());
 
-        // 仅 Claude 应用显示详细配置
-        if matches!(app_type, AppType::Claude) {
-            let config = extract_claude_config(&provider.settings_config);
+            // 仅 Claude 应用显示详细配置
+            if matches!(app_type, AppType::Claude) {
+                let config = extract_claude_config(&provider.settings_config);
 
-            // API 配置
-            println!("\n{}", highlight("API 配置 / API Configuration"));
-            println!(
-                "  Base URL: {}",
-                config.base_url.unwrap_or_else(|| "N/A".to_string())
-            );
-            println!(
-                "  API Key:  {}",
-                config.api_key.unwrap_or_else(|| "N/A".to_string())
-            );
+                // API 配置
+                println!("\n{}", highlight("API 配置 / API Configuration"));
+                println!(
+                    "  Base URL: {}",
+                    config.base_url.unwrap_or_else(|| "N/A".to_string())
+                );
+                println!(
+                    "  API Key:  {}",
+                    config.api_key.unwrap_or_else(|| "N/A".to_string())
+                );
 
-            // 模型配置
-            println!("\n{}", highlight("模型配置 / Model Configuration"));
-            println!(
-                "  主模型:   {}",
-                config.model.unwrap_or_else(|| "default".to_string())
-            );
-            println!(
-                "  Haiku:    {}",
-                config.haiku_model.unwrap_or_else(|| "default".to_string())
-            );
-            println!(
-                "  Sonnet:   {}",
-                config.sonnet_model.unwrap_or_else(|| "default".to_string())
-            );
-            println!(
-                "  Opus:     {}",
-                config.opus_model.unwrap_or_else(|| "default".to_string())
-            );
+                // 模型配置
+                println!("\n{}", highlight("模型配置 / Model Configuration"));
+                println!(
+                    "  主模型:   {}",
+                    config.model.unwrap_or_else(|| "default".to_string())
+                );
+                println!(
+                    "  Haiku:    {}",
+                    config.haiku_model.unwrap_or_else(|| "default".to_string())
+                );
+                println!(
+                    "  Sonnet:   {}",
+                    config.sonnet_model.unwrap_or_else(|| "default".to_string())
+                );
+                println!(
+                    "  Opus:     {}",
+                    config.opus_model.unwrap_or_else(|| "default".to_string())
+                );
+            } else {
+                // Codex/Gemini 应用只显示 API URL
+                println!("\n{}", highlight("API 配置 / API Configuration"));
+                let api_url = extract_api_url(&provider.settings_config, app_type)
+                    .unwrap_or_else(|| "N/A".to_string());
+                println!("  API URL:  {}", api_url);
+            }
+
+            println!("\n{}", "─".repeat(60));
+
+            // Show action menu
+            println!();
+            let choices = vec![texts::speedtest_endpoint(), texts::back()];
+            let choice = Select::new(texts::choose_action(), choices)
+                .prompt()
+                .map_err(|_| AppError::Message("Selection cancelled".to_string()))?;
+
+            if choice == texts::speedtest_endpoint() {
+                speedtest_provider_interactive(state, app_type, current_id, provider)?;
+            } else {
+                break;
+            }
         } else {
-            // Codex/Gemini 应用只显示 API URL
-            println!("\n{}", highlight("API 配置 / API Configuration"));
-            let api_url = extract_api_url(&provider.settings_config, app_type)
-                .unwrap_or_else(|| "N/A".to_string());
-            println!("  API URL:  {}", api_url);
+            break;
         }
-
-        println!("\n{}", "─".repeat(60));
     }
+    Ok(())
+}
+
+fn speedtest_provider_interactive(
+    _state: &AppState,
+    app_type: &AppType,
+    _provider_id: &str,
+    provider: &crate::provider::Provider,
+) -> Result<(), AppError> {
+    // Extract API URL
+    let api_url = extract_api_url(&provider.settings_config, app_type);
+
+    if api_url.is_none() {
+        println!("\n{}", error("No API URL configured for this provider"));
+        pause();
+        return Ok(());
+    }
+
+    let api_url = api_url.unwrap();
+
+    println!("\n{}", info(&format!("Testing provider '{}'...", provider.name)));
+    println!("{}", info(&format!("Endpoint: {}", api_url)));
+    println!();
+
+    // Run speedtest asynchronously
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|e| AppError::Message(format!("Failed to create async runtime: {}", e)))?;
+
+    let results = runtime.block_on(async {
+        SpeedtestService::test_endpoints(vec![api_url.clone()], None).await
+    })?;
+
+    // Display results
+    if let Some(result) = results.first() {
+        let mut table = create_table();
+        table.set_header(vec!["Endpoint", "Latency", "Status"]);
+
+        let latency_str = if let Some(latency) = result.latency {
+            format!("{} ms", latency)
+        } else if result.error.is_some() {
+            "Failed".to_string()
+        } else {
+            "Timeout".to_string()
+        };
+
+        let status_str = result.status
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "N/A".to_string());
+
+        table.add_row(vec![
+            result.url.clone(),
+            latency_str,
+            status_str,
+        ]);
+
+        println!("{}", table);
+
+        // Show error details if any
+        if let Some(err) = &result.error {
+            println!("\n{}", error(&format!("Error: {}", err)));
+        } else if result.latency.is_some() {
+            println!("\n{}", success("✓ Speedtest completed successfully"));
+        }
+    }
+
+    pause();
     Ok(())
 }
 

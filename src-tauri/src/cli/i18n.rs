@@ -1018,4 +1018,21 @@ pub mod texts {
             "No prompts to delete."
         }
     }
+
+    // Provider Speedtest
+    pub fn speedtest_endpoint() -> &'static str {
+        if is_chinese() {
+            "🚀 测试端点速度"
+        } else {
+            "🚀 Speedtest endpoint"
+        }
+    }
+
+    pub fn back() -> &'static str {
+        if is_chinese() {
+            "← 返回"
+        } else {
+            "← Back"
+        }
+    }
 }
