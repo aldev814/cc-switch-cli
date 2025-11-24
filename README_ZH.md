@@ -80,6 +80,8 @@ cc-switch provider list              # 列出所有供应商
 cc-switch provider current           # 显示当前供应商
 cc-switch provider switch <id>       # 切换供应商
 cc-switch provider add               # 添加新供应商
+cc-switch provider edit <id>         # 编辑现有供应商
+cc-switch provider duplicate <id>    # 复制供应商
 cc-switch provider delete <id>       # 删除供应商
 cc-switch provider speedtest <id>    # 测试 API 延迟
 ```
@@ -120,6 +122,8 @@ cc-switch prompts delete <id>        # 删除提示词
 ```
 
 ### 🎯 Skills 管理
+
+⚠️ **注意：v4.0.x 版本暂未实现** - 此功能计划在未来版本中推出。
 
 通过社区技能扩展 Claude Code/Codex/Gemini 的能力。
 

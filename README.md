@@ -80,6 +80,8 @@ cc-switch provider list              # List all providers
 cc-switch provider current           # Show current provider
 cc-switch provider switch <id>       # Switch provider
 cc-switch provider add               # Add new provider
+cc-switch provider edit <id>         # Edit existing provider
+cc-switch provider duplicate <id>    # Duplicate a provider
 cc-switch provider delete <id>       # Delete provider
 cc-switch provider speedtest <id>    # Test API latency
 ```
@@ -120,6 +122,8 @@ cc-switch prompts delete <id>        # Delete prompt
 ```
 
 ### 🎯 Skills Management
+
+⚠️ **Note: Not yet implemented in v4.0.x** - This feature is planned for future releases.
 
 Manage and extend Claude Code/Codex/Gemini capabilities with community skills.
 

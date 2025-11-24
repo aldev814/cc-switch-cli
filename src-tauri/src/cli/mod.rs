@@ -58,10 +58,6 @@ pub enum Commands {
     #[command(subcommand)]
     Env(commands::env::EnvCommand),
 
-    /// Manage application selection
-    #[command(subcommand)]
-    App(commands::app::AppCommand),
-
     /// Enter interactive mode
     #[command(alias = "ui")]
     Interactive,
