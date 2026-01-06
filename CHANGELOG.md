@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.2.3] - 2026-01-06
+
+### Fixed
+
+- **Interactive**: Clear the terminal between screens/menus to prevent ghosting (“拖影”) and keep the UI clean.
+
 ## [4.2.2] - 2026-01-06
 
 ### Fixed
