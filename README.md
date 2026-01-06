@@ -149,6 +149,11 @@ cc-switch config show                # Display configuration
 cc-switch config path                # Show config file paths
 cc-switch config validate            # Validate config file
 
+# Common snippet (shared settings across providers)
+cc-switch --app claude config common show
+cc-switch --app claude config common set --json '{"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":1},"includeCoAuthoredBy":false}' --apply
+cc-switch --app claude config common clear --apply
+
 # Backup
 cc-switch config backup              # Create backup (auto-named)
 cc-switch config backup --name my-backup  # Create backup with custom name

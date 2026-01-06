@@ -50,6 +50,7 @@ struct PostCommitAction {
     backup: LiveSnapshot,
     sync_mcp: bool,
     refresh_snapshot: bool,
+    common_config_snippet: Option<String>,
 }
 
 impl LiveSnapshot {
@@ -197,6 +198,134 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn common_config_snippet_is_merged_into_claude_settings_on_write() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+
+        let mut config = MultiAppConfig::default();
+        config.ensure_app(&AppType::Claude);
+        config.common_config_snippets.claude = Some(
+            r#"{"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":1},"includeCoAuthoredBy":false}"#
+                .to_string(),
+        );
+
+        let state = AppState {
+            config: RwLock::new(config),
+        };
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "First".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token",
+                    "ANTHROPIC_BASE_URL": "https://claude.example"
+                }
+            }),
+            None,
+        );
+
+        ProviderService::add(&state, AppType::Claude, provider).expect("add should succeed");
+
+        let settings_path = get_claude_settings_path();
+        let live: Value = read_json_file(&settings_path).expect("read live settings");
+
+        assert_eq!(
+            live.get("includeCoAuthoredBy").and_then(Value::as_bool),
+            Some(false),
+            "common snippet should be merged into settings.json"
+        );
+
+        let env = live
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("settings.env should be object");
+
+        assert_eq!(
+            env.get("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
+                .and_then(Value::as_i64),
+            Some(1),
+            "common env key should be present in settings.env"
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(Value::as_str),
+            Some("token"),
+            "provider env key should remain in settings.env"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn common_config_snippet_is_not_persisted_into_provider_snapshot_on_switch() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+
+        let mut config = MultiAppConfig::default();
+        config.ensure_app(&AppType::Claude);
+        config.common_config_snippets.claude = Some(
+            r#"{"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":1},"includeCoAuthoredBy":false}"#
+                .to_string(),
+        );
+
+        let state = AppState {
+            config: RwLock::new(config),
+        };
+
+        let p1 = Provider::with_id(
+            "p1".to_string(),
+            "First".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token1",
+                    "ANTHROPIC_BASE_URL": "https://claude.one"
+                }
+            }),
+            None,
+        );
+        let p2 = Provider::with_id(
+            "p2".to_string(),
+            "Second".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token2",
+                    "ANTHROPIC_BASE_URL": "https://claude.two"
+                }
+            }),
+            None,
+        );
+
+        ProviderService::add(&state, AppType::Claude, p1).expect("add p1");
+        ProviderService::add(&state, AppType::Claude, p2).expect("add p2");
+
+        ProviderService::switch(&state, AppType::Claude, "p2").expect("switch to p2");
+
+        let cfg = state.config.read().expect("read config");
+        let manager = cfg.get_manager(&AppType::Claude).expect("claude manager");
+        let p1_after = manager.providers.get("p1").expect("p1 exists");
+
+        assert!(
+            p1_after.settings_config.get("includeCoAuthoredBy").is_none(),
+            "common top-level keys should not be persisted into provider snapshot"
+        );
+
+        let env = p1_after
+            .settings_config
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("provider env should be object");
+        assert!(
+            !env.contains_key("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"),
+            "common env keys should not be persisted into provider snapshot"
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(Value::as_str),
+            Some("token1"),
+            "provider-specific env should remain in snapshot"
+        );
+    }
+
+    #[test]
     fn extract_credentials_returns_expected_values() {
         let provider = Provider::with_id(
             "claude".into(),
@@ -213,6 +342,52 @@ mod tests {
             ProviderService::extract_credentials(&provider, &AppType::Claude).unwrap();
         assert_eq!(api_key, "token");
         assert_eq!(base_url, "https://claude.example");
+    }
+}
+
+fn merge_json_values(base: &mut Value, overlay: &Value) {
+    match (base, overlay) {
+        (Value::Object(base_map), Value::Object(overlay_map)) => {
+            for (key, overlay_value) in overlay_map {
+                match base_map.get_mut(key) {
+                    Some(base_value) => merge_json_values(base_value, overlay_value),
+                    None => {
+                        base_map.insert(key.clone(), overlay_value.clone());
+                    }
+                }
+            }
+        }
+        (base_value, overlay_value) => {
+            *base_value = overlay_value.clone();
+        }
+    }
+}
+
+fn strip_common_values(target: &mut Value, common: &Value) {
+    match (target, common) {
+        (Value::Object(target_map), Value::Object(common_map)) => {
+            for (key, common_value) in common_map {
+                let should_remove = match target_map.get_mut(key) {
+                    Some(target_value) => match target_value {
+                        Value::Object(_) if matches!(common_value, Value::Object(_)) => {
+                            strip_common_values(target_value, common_value);
+                            target_value.as_object().is_some_and(|m| m.is_empty())
+                        }
+                        _ => target_value == common_value,
+                    },
+                    None => false,
+                };
+
+                if should_remove {
+                    target_map.remove(key);
+                }
+            }
+        }
+        (target_value, common_value) => {
+            if target_value == common_value {
+                *target_value = Value::Null;
+            }
+        }
     }
 }
 
@@ -234,6 +409,24 @@ impl ProviderService {
 
     // Partner Promotion Key 常量
     const GOOGLE_OFFICIAL_PARTNER_KEY: &'static str = "google-official";
+
+    fn parse_common_claude_config_snippet(snippet: &str) -> Result<Value, AppError> {
+        let value: Value = serde_json::from_str(snippet).map_err(|e| {
+            AppError::localized(
+                "common_config.claude.invalid_json",
+                format!("Claude 通用配置片段不是有效的 JSON：{e}"),
+                format!("Claude common config snippet is not valid JSON: {e}"),
+            )
+        })?;
+        if !value.is_object() {
+            return Err(AppError::localized(
+                "common_config.claude.not_object",
+                "Claude 通用配置片段必须是 JSON 对象",
+                "Claude common config snippet must be a JSON object",
+            ));
+        }
+        Ok(value)
+    }
 
     /// 检测 Gemini 供应商的认证类型
     ///
@@ -489,7 +682,11 @@ impl ProviderService {
     }
 
     fn apply_post_commit(state: &AppState, action: &PostCommitAction) -> Result<(), AppError> {
-        Self::write_live_snapshot(&action.app_type, &action.provider)?;
+        Self::write_live_snapshot(
+            &action.app_type,
+            &action.provider,
+            action.common_config_snippet.as_deref(),
+        )?;
         if action.sync_mcp {
             // 使用 v3.7.0 统一的 MCP 同步机制，支持所有应用
             use crate::services::mcp::McpService;
@@ -518,6 +715,18 @@ impl ProviderService {
                 }
                 let mut live_after = read_json_file::<Value>(&settings_path)?;
                 let _ = Self::normalize_claude_models_in_value(&mut live_after);
+
+                let common_snippet = {
+                    let guard = state.config.read().map_err(AppError::from)?;
+                    guard.common_config_snippets.claude.clone()
+                };
+                if let Some(snippet) = common_snippet.as_deref() {
+                    let snippet = snippet.trim();
+                    if !snippet.is_empty() {
+                        let common = Self::parse_common_claude_config_snippet(snippet)?;
+                        strip_common_values(&mut live_after, &common);
+                    }
+                }
                 {
                     let mut guard = state.config.write().map_err(AppError::from)?;
                     if let Some(manager) = guard.get_manager_mut(app_type) {
@@ -697,12 +906,17 @@ impl ProviderService {
             let is_current = manager.current == provider_clone.id;
             let action = if is_current {
                 let backup = Self::capture_live_snapshot(&app_type_clone)?;
+                let common_config_snippet = config
+                    .common_config_snippets
+                    .get(&app_type_clone)
+                    .cloned();
                 Some(PostCommitAction {
                     app_type: app_type_clone.clone(),
                     provider: provider_clone.clone(),
                     backup,
                     sync_mcp: false,
                     refresh_snapshot: false,
+                    common_config_snippet,
                 })
             } else {
                 None
@@ -764,12 +978,17 @@ impl ProviderService {
 
             let action = if is_current {
                 let backup = Self::capture_live_snapshot(&app_type_clone)?;
+                let common_config_snippet = config
+                    .common_config_snippets
+                    .get(&app_type_clone)
+                    .cloned();
                 Some(PostCommitAction {
                     app_type: app_type_clone.clone(),
                     provider: provider_clone.clone(),
                     backup,
                     sync_mcp: false,
                     refresh_snapshot: false,
+                    common_config_snippet,
                 })
             } else {
                 None
@@ -1253,6 +1472,10 @@ impl ProviderService {
                 backup,
                 sync_mcp: true, // v3.7.0: 所有应用切换时都同步 MCP，防止配置丢失
                 refresh_snapshot: true,
+                common_config_snippet: config
+                    .common_config_snippets
+                    .get(&app_type_clone)
+                    .cloned(),
             };
 
             Ok(((), Some(action)))
@@ -1543,6 +1766,13 @@ impl ProviderService {
 
         let mut live = read_json_file::<Value>(&settings_path)?;
         let _ = Self::normalize_claude_models_in_value(&mut live);
+        if let Some(snippet) = config.common_config_snippets.claude.as_deref() {
+            let snippet = snippet.trim();
+            if !snippet.is_empty() {
+                let common = Self::parse_common_claude_config_snippet(snippet)?;
+                strip_common_values(&mut live, &common);
+            }
+        }
         if let Some(manager) = config.get_manager_mut(&AppType::Claude) {
             if let Some(current) = manager.providers.get_mut(&current_id) {
                 current.settings_config = live;
@@ -1595,11 +1825,30 @@ impl ProviderService {
         Ok(())
     }
 
-    fn write_claude_live(provider: &Provider) -> Result<(), AppError> {
+    fn write_claude_live(
+        provider: &Provider,
+        common_config_snippet: Option<&str>,
+    ) -> Result<(), AppError> {
         let settings_path = get_claude_settings_path();
-        let mut content = provider.settings_config.clone();
-        let _ = Self::normalize_claude_models_in_value(&mut content);
-        write_json_file(&settings_path, &content)?;
+        let mut provider_content = provider.settings_config.clone();
+        let _ = Self::normalize_claude_models_in_value(&mut provider_content);
+
+        let content_to_write = if let Some(snippet) = common_config_snippet {
+            let snippet = snippet.trim();
+            if snippet.is_empty() {
+                provider_content
+            } else {
+                let common = Self::parse_common_claude_config_snippet(snippet)?;
+                let mut merged = common;
+                merge_json_values(&mut merged, &provider_content);
+                let _ = Self::normalize_claude_models_in_value(&mut merged);
+                merged
+            }
+        } else {
+            provider_content
+        };
+
+        write_json_file(&settings_path, &content_to_write)?;
         Ok(())
     }
 
@@ -1673,10 +1922,14 @@ impl ProviderService {
         Ok(())
     }
 
-    fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+    fn write_live_snapshot(
+        app_type: &AppType,
+        provider: &Provider,
+        common_config_snippet: Option<&str>,
+    ) -> Result<(), AppError> {
         match app_type {
             AppType::Codex => Self::write_codex_live(provider),
-            AppType::Claude => Self::write_claude_live(provider),
+            AppType::Claude => Self::write_claude_live(provider, common_config_snippet),
             AppType::Gemini => Self::write_gemini_live(provider), // 新增
         }
     }

@@ -149,6 +149,11 @@ cc-switch config show                # 显示配置
 cc-switch config path                # 显示配置文件路径
 cc-switch config validate            # 验证配置文件
 
+# 通用配置片段（跨所有供应商共享设置）
+cc-switch --app claude config common show
+cc-switch --app claude config common set --json '{"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":1},"includeCoAuthoredBy":false}' --apply
+cc-switch --app claude config common clear --apply
+
 # 备份
 cc-switch config backup              # 创建备份（自动命名）
 cc-switch config backup --name my-backup  # 创建备份（自定义名称）

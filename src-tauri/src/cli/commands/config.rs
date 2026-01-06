@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use crate::app_config::MultiAppConfig;
+use crate::app_config::{AppType, MultiAppConfig};
 use crate::cli::ui::{error, highlight, info, success, to_json};
 use crate::error::AppError;
 use crate::services::ConfigService;
@@ -45,9 +45,39 @@ pub enum ConfigCommand {
     Validate,
     /// Reset to default configuration
     Reset,
+
+    /// Manage common configuration snippet (per app)
+    #[command(subcommand)]
+    Common(CommonConfigCommand),
 }
 
-pub fn execute(cmd: ConfigCommand) -> Result<(), AppError> {
+#[derive(Subcommand)]
+pub enum CommonConfigCommand {
+    /// Show current common config snippet
+    Show,
+    /// Set common config snippet (JSON object)
+    Set {
+        /// JSON object string (e.g. '{"env":{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":1}}')
+        #[arg(long, conflicts_with = "file")]
+        json: Option<String>,
+
+        /// Read JSON object from file
+        #[arg(long, conflicts_with = "json")]
+        file: Option<PathBuf>,
+
+        /// Apply to current provider immediately
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Clear common config snippet
+    Clear {
+        /// Apply to current provider immediately
+        #[arg(long)]
+        apply: bool,
+    },
+}
+
+pub fn execute(cmd: ConfigCommand, app: Option<AppType>) -> Result<(), AppError> {
     match cmd {
         ConfigCommand::Show => show_config(),
         ConfigCommand::Path => show_path(),
@@ -59,6 +89,7 @@ pub fn execute(cmd: ConfigCommand) -> Result<(), AppError> {
         }
         ConfigCommand::Validate => validate_config(),
         ConfigCommand::Reset => reset_config(),
+        ConfigCommand::Common(cmd) => execute_common(cmd, app.unwrap_or(AppType::Claude)),
     }
 }
 
@@ -81,6 +112,134 @@ fn show_config() -> Result<(), AppError> {
     let json = to_json(&*config).map_err(|e| AppError::Message(e.to_string()))?;
     println!("{}", json);
 
+    Ok(())
+}
+
+fn execute_common(cmd: CommonConfigCommand, app_type: AppType) -> Result<(), AppError> {
+    match cmd {
+        CommonConfigCommand::Show => show_common(app_type),
+        CommonConfigCommand::Set { json, file, apply } => {
+            set_common(app_type, json.as_deref(), file.as_deref(), apply)
+        }
+        CommonConfigCommand::Clear { apply } => clear_common(app_type, apply),
+    }
+}
+
+fn show_common(app_type: AppType) -> Result<(), AppError> {
+    let state = get_state()?;
+    let config = state.config.read()?;
+    let snippet = config.common_config_snippets.get(&app_type).cloned();
+
+    println!("{}", highlight("Common Config Snippet"));
+    println!("{}", "=".repeat(50));
+    println!("App: {}", app_type.as_str());
+    println!();
+
+    match snippet {
+        Some(s) if !s.trim().is_empty() => {
+            println!("{}", s);
+        }
+        _ => {
+            println!("{}", info("No common config snippet is set."));
+        }
+    }
+
+    Ok(())
+}
+
+fn set_common(
+    app_type: AppType,
+    json_text: Option<&str>,
+    file: Option<&Path>,
+    apply: bool,
+) -> Result<(), AppError> {
+    let raw = if let Some(text) = json_text {
+        text.to_string()
+    } else if let Some(path) = file {
+        fs::read_to_string(path).map_err(|e| AppError::io(path, e))?
+    } else {
+        return Err(AppError::InvalidInput(
+            "Please provide --json or --file".to_string(),
+        ));
+    };
+
+    let value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| AppError::InvalidInput(format!("Invalid JSON: {e}")))?;
+    if !value.is_object() {
+        return Err(AppError::InvalidInput(
+            "Common config must be a JSON object".to_string(),
+        ));
+    }
+
+    let pretty = serde_json::to_string_pretty(&value)
+        .map_err(|e| AppError::Message(format!("Failed to serialize JSON: {e}")))?;
+
+    let state = get_state()?;
+    {
+        let mut config = state.config.write()?;
+        config.common_config_snippets.set(&app_type, Some(pretty));
+        config.save()?;
+    }
+
+    println!(
+        "{}",
+        success(&format!(
+            "✓ Common config snippet set for app '{}'",
+            app_type.as_str()
+        ))
+    );
+
+    if apply {
+        apply_common_to_current(&state, app_type)?;
+    } else {
+        println!(
+            "{}",
+            info("Tip: run `cc-switch provider switch <id>` to re-apply settings to the live config.")
+        );
+    }
+
+    Ok(())
+}
+
+fn clear_common(app_type: AppType, apply: bool) -> Result<(), AppError> {
+    let state = get_state()?;
+    {
+        let mut config = state.config.write()?;
+        config.common_config_snippets.set(&app_type, None);
+        config.save()?;
+    }
+
+    println!(
+        "{}",
+        success(&format!(
+            "✓ Common config snippet cleared for app '{}'",
+            app_type.as_str()
+        ))
+    );
+
+    if apply {
+        apply_common_to_current(&state, app_type)?;
+    } else {
+        println!(
+            "{}",
+            info("Tip: run `cc-switch provider switch <id>` to re-apply settings to the live config.")
+        );
+    }
+
+    Ok(())
+}
+
+fn apply_common_to_current(state: &AppState, app_type: AppType) -> Result<(), AppError> {
+    use crate::services::ProviderService;
+
+    let current_id = ProviderService::current(state, app_type.clone())?;
+    if current_id.trim().is_empty() {
+        println!("{}", info("No current provider; nothing to apply."));
+        return Ok(());
+    }
+
+    ProviderService::switch(state, app_type, &current_id)?;
+    println!("{}", success("✓ Applied to live config."));
     Ok(())
 }
 
