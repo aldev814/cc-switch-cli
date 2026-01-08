@@ -39,6 +39,10 @@ mod tests {
             toml_text.contains("requires_openai_auth = true"),
             "official Codex provider should enable requires_openai_auth"
         );
+        assert!(
+            toml_text.contains("wire_api = \"responses\""),
+            "official Codex provider should use responses wire API"
+        );
     }
 
     #[test]
@@ -74,11 +78,11 @@ pub fn prompt_settings_config_for_add(
     }
 }
 
-fn build_codex_official_settings_config(model: &str, wire_api: &str) -> Value {
+fn build_codex_official_settings_config(model: &str, _wire_api: &str) -> Value {
     let config_toml = [
         format!("base_url = \"{}\"", CODEX_OFFICIAL_BASE_URL),
         format!("model = \"{}\"", model.trim()),
-        format!("wire_api = \"{}\"", wire_api.trim()),
+        format!("wire_api = \"{}\"", "responses"),
         "requires_openai_auth = true".to_string(),
     ]
     .join("\n");
@@ -623,15 +627,10 @@ fn prompt_codex_official_config() -> Result<Value, AppError> {
         .with_help_message("Model name (e.g., gpt-4, o3)")
         .prompt()
         .map_err(|e| AppError::Message(texts::input_failed_error(&e.to_string())))?;
-
-    let wire_api_options = vec!["chat", "responses"];
-    let wire_api = Select::new(texts::codex_wire_api_label(), wire_api_options)
-        .with_starting_cursor(0)
-        .with_help_message(texts::codex_wire_api_help())
-        .prompt()
-        .map_err(|e| AppError::Message(texts::input_failed_error(&e.to_string())))?;
-
-    Ok(build_codex_official_settings_config(model.trim(), wire_api))
+    Ok(build_codex_official_settings_config(
+        model.trim(),
+        "responses",
+    ))
 }
 
 /// Gemini 配置输入（含认证类型选择）

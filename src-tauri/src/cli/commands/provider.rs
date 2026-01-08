@@ -13,7 +13,7 @@ use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::{ProviderService, SpeedtestService};
 use crate::store::AppState;
-use inquire::{Confirm, Select};
+use inquire::{Confirm, Select, Text};
 
 #[derive(Subcommand)]
 pub enum ProviderCommand {
@@ -287,7 +287,37 @@ fn add_provider(app_type: AppType) -> Result<(), AppError> {
     drop(config);
 
     // 2. 收集基本字段
-    let (name, website_url) = prompt_basic_fields(None)?;
+    let (name, website_url) = match (app_type.clone(), add_mode) {
+        (AppType::Codex, ProviderAddMode::Official) => {
+            let name = Text::new(texts::provider_name_label())
+                .with_placeholder("OpenAI")
+                .with_help_message(texts::provider_name_help())
+                .prompt()
+                .map_err(|e| AppError::Message(texts::input_failed_error(&e.to_string())))?;
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return Err(AppError::InvalidInput(
+                    texts::provider_name_empty_error().to_string(),
+                ));
+            }
+            (name, Some("https://openai.com".to_string()))
+        }
+        (AppType::Claude, ProviderAddMode::Official) => {
+            let name = Text::new(texts::provider_name_label())
+                .with_placeholder("Anthropic")
+                .with_help_message(texts::provider_name_help())
+                .prompt()
+                .map_err(|e| AppError::Message(texts::input_failed_error(&e.to_string())))?;
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return Err(AppError::InvalidInput(
+                    texts::provider_name_empty_error().to_string(),
+                ));
+            }
+            (name, Some("https://www.anthropic.com".to_string()))
+        }
+        _ => prompt_basic_fields(None)?,
+    };
     let id = generate_provider_id(&name, &existing_ids);
     println!("{}", info(&texts::generated_id_message(&id)));
 
