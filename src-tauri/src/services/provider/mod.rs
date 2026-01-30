@@ -546,6 +546,133 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn common_config_snippet_is_merged_into_codex_config_on_write() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+
+        let mut config = MultiAppConfig::default();
+        config.ensure_app(&AppType::Codex);
+        config.common_config_snippets.codex = Some("disable_response_storage = true".to_string());
+
+        let state = AppState {
+            config: RwLock::new(config),
+        };
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "First".to_string(),
+            json!({
+                "config": "base_url = \"https://api.example/v1\"\nmodel = \"gpt-5.2-codex\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+
+        ProviderService::add(&state, AppType::Codex, provider).expect("add should succeed");
+
+        let live_text = std::fs::read_to_string(get_codex_config_path()).expect("read config.toml");
+        assert!(
+            live_text.contains("disable_response_storage = true"),
+            "common snippet should be merged into config.toml"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_switch_extracts_common_snippet_preserving_mcp_servers() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+
+        let mut config = MultiAppConfig::default();
+        config.ensure_app(&AppType::Codex);
+        {
+            let manager = config
+                .get_manager_mut(&AppType::Codex)
+                .expect("codex manager");
+            manager.current = "p1".to_string();
+            manager.providers.insert(
+                "p1".to_string(),
+                Provider::with_id(
+                    "p1".to_string(),
+                    "First".to_string(),
+                    json!({ "config": "base_url = \"https://api.one.example/v1\"\n" }),
+                    None,
+                ),
+            );
+            manager.providers.insert(
+                "p2".to_string(),
+                Provider::with_id(
+                    "p2".to_string(),
+                    "Second".to_string(),
+                    json!({ "config": "base_url = \"https://api.two.example/v1\"\n" }),
+                    None,
+                ),
+            );
+        }
+
+        let state = AppState {
+            config: RwLock::new(config),
+        };
+
+        let config_toml = r#"model_provider = "azure"
+model = "gpt-4"
+disable_response_storage = true
+
+[model_providers.azure]
+name = "Azure OpenAI"
+base_url = "https://azure.example/v1"
+wire_api = "responses"
+
+[mcp_servers.my_server]
+base_url = "http://localhost:8080"
+"#;
+
+        let config_path = get_codex_config_path();
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent).expect("create codex dir");
+        }
+        std::fs::write(&config_path, config_toml).expect("seed config.toml");
+
+        ProviderService::switch(&state, AppType::Codex, "p2").expect("switch should succeed");
+
+        let cfg = state.config.read().expect("read config after switch");
+        let extracted = cfg
+            .common_config_snippets
+            .codex
+            .as_deref()
+            .unwrap_or_default();
+
+        assert!(
+            extracted.contains("disable_response_storage = true"),
+            "should keep top-level common config"
+        );
+        assert!(
+            extracted.contains("[mcp_servers.my_server]"),
+            "should keep mcp_servers table"
+        );
+        assert!(
+            extracted.contains("base_url = \"http://localhost:8080\""),
+            "should keep mcp_servers.* base_url"
+        );
+        assert!(
+            !extracted
+                .lines()
+                .any(|line| line.trim_start().starts_with("model_provider")),
+            "should remove top-level model_provider"
+        );
+        assert!(
+            !extracted
+                .lines()
+                .any(|line| line.trim_start().starts_with("model =")),
+            "should remove top-level model"
+        );
+        assert!(
+            !extracted.contains("[model_providers"),
+            "should remove entire model_providers table"
+        );
+    }
+
+    #[test]
     fn extract_credentials_returns_expected_values() {
         let provider = Provider::with_id(
             "claude".into(),
@@ -838,6 +965,87 @@ impl ProviderService {
             ));
         }
         Ok(value)
+    }
+
+    fn extract_codex_common_config_from_config_toml(config_toml: &str) -> Result<String, AppError> {
+        let config_toml = config_toml.trim();
+        if config_toml.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut doc = config_toml
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| AppError::Message(format!("TOML parse error: {e}")))?;
+
+        // Remove provider-specific fields.
+        let root = doc.as_table_mut();
+        root.remove("model");
+        root.remove("model_provider");
+        // Legacy/alt formats might use a top-level base_url.
+        root.remove("base_url");
+        // Remove entire model_providers table (provider-specific configuration)
+        root.remove("model_providers");
+
+        // Clean up multiple empty lines (keep at most one blank line).
+        let mut cleaned = String::new();
+        let mut blank_run = 0usize;
+        for line in doc.to_string().lines() {
+            if line.trim().is_empty() {
+                blank_run += 1;
+                if blank_run <= 1 {
+                    cleaned.push('\n');
+                }
+                continue;
+            }
+            blank_run = 0;
+            cleaned.push_str(line);
+            cleaned.push('\n');
+        }
+
+        Ok(cleaned.trim().to_string())
+    }
+
+    fn maybe_update_codex_common_config_snippet(
+        config: &mut MultiAppConfig,
+        config_toml: &str,
+    ) -> Result<(), AppError> {
+        let existing = config
+            .common_config_snippets
+            .codex
+            .as_deref()
+            .unwrap_or_default()
+            .trim();
+        if !existing.is_empty() {
+            return Ok(());
+        }
+
+        let extracted = Self::extract_codex_common_config_from_config_toml(config_toml)?;
+        if extracted.trim().is_empty() {
+            return Ok(());
+        }
+
+        config.common_config_snippets.codex = Some(extracted);
+        Ok(())
+    }
+
+    fn merge_toml_tables(dst: &mut toml_edit::Table, src: &toml_edit::Table) {
+        for (key, src_item) in src.iter() {
+            match (dst.get_mut(key), src_item.as_table()) {
+                (Some(dst_item), Some(src_table)) => {
+                    if let Some(dst_table) = dst_item.as_table_mut() {
+                        Self::merge_toml_tables(dst_table, src_table);
+                    } else {
+                        *dst_item = toml_edit::Item::Table(src_table.clone());
+                    }
+                }
+                (Some(dst_item), None) => {
+                    *dst_item = src_item.clone();
+                }
+                (None, _) => {
+                    dst.insert(key, src_item.clone());
+                }
+            }
+        }
     }
 
     /// 检测 Gemini 供应商的认证类型
@@ -1158,9 +1366,21 @@ impl ProviderService {
                 };
                 let cfg_text = crate::codex_config::read_and_validate_codex_config_text()?;
                 let cfg_snippet = Self::codex_config_snippet_from_live_config(&cfg_text)?;
+                let common_snippet = Self::extract_codex_common_config_from_config_toml(&cfg_text)?;
 
                 {
                     let mut guard = state.config.write().map_err(AppError::from)?;
+                    if !common_snippet.trim().is_empty()
+                        && guard
+                            .common_config_snippets
+                            .codex
+                            .as_deref()
+                            .unwrap_or_default()
+                            .trim()
+                            .is_empty()
+                    {
+                        guard.common_config_snippets.codex = Some(common_snippet.clone());
+                    }
                     if let Some(manager) = guard.get_manager_mut(app_type) {
                         if let Some(target) = manager.providers.get_mut(provider_id) {
                             let obj = target.settings_config.as_object_mut().ok_or_else(|| {
@@ -1920,6 +2140,7 @@ impl ProviderService {
         let config_snippet = if config_path.exists() {
             let config_text =
                 std::fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?;
+            Self::maybe_update_codex_common_config_snippet(config, &config_text)?;
             Some(Self::codex_config_snippet_from_live_config(&config_text)?)
         } else {
             None
@@ -1944,7 +2165,10 @@ impl ProviderService {
         Ok(())
     }
 
-    fn write_codex_live(provider: &Provider) -> Result<(), AppError> {
+    fn write_codex_live(
+        provider: &Provider,
+        common_config_snippet: Option<&str>,
+    ) -> Result<(), AppError> {
         use toml_edit::{value, Item, Table};
 
         let settings = provider
@@ -2009,6 +2233,20 @@ impl ProviderService {
                 .parse::<toml_edit::DocumentMut>()
                 .map_err(|e| AppError::Config(format!("解析 config.toml 失败: {}", e)))?
         };
+
+        if let Some(snippet) = common_config_snippet {
+            let snippet = snippet.trim();
+            if !snippet.is_empty() {
+                let common_doc = snippet.parse::<toml_edit::DocumentMut>().map_err(|e| {
+                    AppError::localized(
+                        "common_config.codex.invalid_toml",
+                        format!("Codex 通用配置片段不是有效的 TOML：{e}"),
+                        format!("Codex common config snippet is not valid TOML: {e}"),
+                    )
+                })?;
+                Self::merge_toml_tables(doc.as_table_mut(), common_doc.as_table());
+            }
+        }
 
         // 移除不应该在根级别的字段
         doc.as_table_mut().remove("base_url");
@@ -2368,7 +2606,7 @@ impl ProviderService {
         common_config_snippet: Option<&str>,
     ) -> Result<(), AppError> {
         match app_type {
-            AppType::Codex => Self::write_codex_live(provider),
+            AppType::Codex => Self::write_codex_live(provider, common_config_snippet),
             AppType::Claude => Self::write_claude_live(provider, common_config_snippet),
             AppType::Gemini => Self::write_gemini_live(provider, common_config_snippet), // 新增
         }
