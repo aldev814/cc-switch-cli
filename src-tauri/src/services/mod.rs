@@ -10,6 +10,6 @@ pub mod speedtest;
 pub use config::ConfigService;
 pub use mcp::McpService;
 pub use prompt::PromptService;
-pub use provider::{ProviderService, ProviderSortUpdate};
-pub use skill::{Skill, SkillRepo, SkillService};
+pub use provider::ProviderService;
+pub use skill::SkillService;
 pub use speedtest::{EndpointLatency, SpeedtestService};

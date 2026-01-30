@@ -20,7 +20,8 @@ pub async fn export_config_to_file(file_path: String) -> Result<Value, String> {
         std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e).to_string())?;
     }
 
-    let bytes = std::fs::read(&source_path).map_err(|e| AppError::io(&source_path, e).to_string())?;
+    let bytes =
+        std::fs::read(&source_path).map_err(|e| AppError::io(&source_path, e).to_string())?;
     std::fs::write(&target_path, bytes).map_err(|e| AppError::io(&target_path, e).to_string())?;
 
     Ok(json!({
@@ -29,4 +30,3 @@ pub async fn export_config_to_file(file_path: String) -> Result<Value, String> {
         "filePath": file_path
     }))
 }
-

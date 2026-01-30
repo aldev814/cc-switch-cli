@@ -1,3 +1,5 @@
+use indexmap::IndexMap;
+
 use crate::app_config::AppType;
 use crate::cli::i18n::texts;
 use crate::cli::ui::{create_table, error, highlight, info, success};
@@ -267,7 +269,7 @@ pub fn extract_api_url(settings_config: &serde_json::Value, app_type: &AppType) 
 fn switch_provider_interactive(
     state: &AppState,
     app_type: &AppType,
-    providers: &std::collections::HashMap<String, crate::provider::Provider>,
+    providers: &IndexMap<String, crate::provider::Provider>,
     current_id: &str,
 ) -> Result<(), AppError> {
     if providers.len() <= 1 {
@@ -311,7 +313,7 @@ fn switch_provider_interactive(
 fn delete_provider_interactive(
     state: &AppState,
     app_type: &AppType,
-    providers: &std::collections::HashMap<String, crate::provider::Provider>,
+    providers: &IndexMap<String, crate::provider::Provider>,
     current_id: &str,
 ) -> Result<(), AppError> {
     let deletable: Vec<_> = providers
@@ -401,7 +403,7 @@ impl std::fmt::Display for CodexConfigFile {
 
 fn edit_provider_interactive(
     app_type: &AppType,
-    providers: &std::collections::HashMap<String, crate::provider::Provider>,
+    providers: &IndexMap<String, crate::provider::Provider>,
 ) -> Result<(), AppError> {
     if providers.is_empty() {
         println!("{}", error(texts::no_editable_providers()));

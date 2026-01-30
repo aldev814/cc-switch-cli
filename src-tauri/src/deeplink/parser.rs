@@ -13,8 +13,8 @@ use url::Url;
 /// Expected format:
 /// `ccswitch://v1/import?resource=provider&...`
 pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppError> {
-    let url =
-        Url::parse(url_str).map_err(|e| AppError::InvalidInput(format!("Invalid deep link URL: {e}")))?;
+    let url = Url::parse(url_str)
+        .map_err(|e| AppError::InvalidInput(format!("Invalid deep link URL: {e}")))?;
 
     let scheme = url.scheme();
     if scheme != "ccswitch" {
@@ -134,4 +134,3 @@ fn parse_provider_deeplink(
             .and_then(|v| v.parse::<u64>().ok()),
     })
 }
-

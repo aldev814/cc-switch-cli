@@ -85,4 +85,3 @@ pub fn infer_homepage_from_endpoint(endpoint: &str) -> Option<String> {
 
     Some(format!("https://{clean_host}"))
 }
-

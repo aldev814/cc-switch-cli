@@ -1,6 +1,6 @@
+use futures::executor::block_on;
 use serde_json::json;
 use std::{fs, path::Path, sync::RwLock};
-use futures::executor::block_on;
 
 use cc_switch_lib::{
     get_claude_settings_path, read_json_file, AppError, AppState, AppType, ConfigService,

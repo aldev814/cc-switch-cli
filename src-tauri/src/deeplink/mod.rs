@@ -10,7 +10,7 @@ mod utils;
 use serde::{Deserialize, Serialize};
 
 pub use parser::parse_deeplink_url;
-pub use provider::{import_provider_from_deeplink, parse_and_merge_config};
+pub use provider::import_provider_from_deeplink;
 
 /// Deep link import request model.
 ///
@@ -84,4 +84,3 @@ pub struct DeepLinkImportRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_auto_interval: Option<u64>,
 }
-

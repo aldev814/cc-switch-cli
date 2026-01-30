@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -352,6 +353,69 @@ mod tests {
 
     #[test]
     #[serial]
+    fn current_self_heals_when_current_provider_missing() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = EnvGuard::set_home(temp_home.path());
+
+        let mut config = MultiAppConfig::default();
+        config.ensure_app(&AppType::Claude);
+        {
+            let manager = config
+                .get_manager_mut(&AppType::Claude)
+                .expect("claude manager");
+            manager.current = "missing".to_string();
+
+            let mut p1 = Provider::with_id(
+                "p1".to_string(),
+                "First".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "token1",
+                        "ANTHROPIC_BASE_URL": "https://claude.one"
+                    }
+                }),
+                None,
+            );
+            p1.sort_index = Some(10);
+
+            let mut p2 = Provider::with_id(
+                "p2".to_string(),
+                "Second".to_string(),
+                json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "token2",
+                        "ANTHROPIC_BASE_URL": "https://claude.two"
+                    }
+                }),
+                None,
+            );
+            p2.sort_index = Some(0);
+
+            manager.providers.insert("p1".to_string(), p1);
+            manager.providers.insert("p2".to_string(), p2);
+        }
+
+        let state = AppState {
+            config: RwLock::new(config),
+        };
+
+        let current_id =
+            ProviderService::current(&state, AppType::Claude).expect("self-heal current provider");
+        assert_eq!(
+            current_id, "p2",
+            "should pick provider with smaller sort_index"
+        );
+
+        let cfg = state.config.read().expect("read config");
+        let manager = cfg.get_manager(&AppType::Claude).expect("claude manager");
+        assert_eq!(
+            manager.current, "p2",
+            "current should be updated in config after self-heal"
+        );
+    }
+
+    #[test]
+    #[serial]
     fn common_config_snippet_is_merged_into_claude_settings_on_write() {
         let temp_home = TempDir::new().expect("create temp home");
         let _env = EnvGuard::set_home(temp_home.path());
@@ -497,6 +561,77 @@ mod tests {
         let (api_key, base_url) =
             ProviderService::extract_credentials(&provider, &AppType::Claude).unwrap();
         assert_eq!(api_key, "token");
+        assert_eq!(base_url, "https://claude.example");
+    }
+
+    #[test]
+    fn resolve_usage_script_credentials_falls_back_to_provider_values() {
+        let provider = Provider::with_id(
+            "claude".into(),
+            "Claude".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token",
+                    "ANTHROPIC_BASE_URL": "https://claude.example"
+                }
+            }),
+            None,
+        );
+        let usage_script = crate::provider::UsageScript {
+            enabled: true,
+            language: "javascript".to_string(),
+            code: String::new(),
+            timeout: None,
+            api_key: None,
+            base_url: None,
+            access_token: None,
+            user_id: None,
+            template_type: None,
+            auto_query_interval: None,
+        };
+
+        let (api_key, base_url) = ProviderService::resolve_usage_script_credentials(
+            &provider,
+            &AppType::Claude,
+            &usage_script,
+        )
+        .expect("should resolve via provider values");
+        assert_eq!(api_key, "token");
+        assert_eq!(base_url, "https://claude.example");
+    }
+
+    #[test]
+    fn resolve_usage_script_credentials_does_not_require_provider_api_key_when_script_has_one() {
+        let provider = Provider::with_id(
+            "claude".into(),
+            "Claude".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://claude.example"
+                }
+            }),
+            None,
+        );
+        let usage_script = crate::provider::UsageScript {
+            enabled: true,
+            language: "javascript".to_string(),
+            code: String::new(),
+            timeout: None,
+            api_key: Some("override".to_string()),
+            base_url: None,
+            access_token: None,
+            user_id: None,
+            template_type: None,
+            auto_query_interval: None,
+        };
+
+        let (api_key, base_url) = ProviderService::resolve_usage_script_credentials(
+            &provider,
+            &AppType::Claude,
+            &usage_script,
+        )
+        .expect("should resolve base_url from provider without needing provider api key");
+        assert_eq!(api_key, "override");
         assert_eq!(base_url, "https://claude.example");
     }
 
@@ -1150,7 +1285,7 @@ impl ProviderService {
     pub fn list(
         state: &AppState,
         app_type: AppType,
-    ) -> Result<HashMap<String, Provider>, AppError> {
+    ) -> Result<IndexMap<String, Provider>, AppError> {
         let config = state.config.read().map_err(AppError::from)?;
         let manager = config
             .get_manager(&app_type)
@@ -1160,11 +1295,42 @@ impl ProviderService {
 
     /// 获取当前供应商 ID
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
-        let config = state.config.read().map_err(AppError::from)?;
-        let manager = config
-            .get_manager(&app_type)
-            .ok_or_else(|| Self::app_not_found(&app_type))?;
-        Ok(manager.current.clone())
+        {
+            let config = state.config.read().map_err(AppError::from)?;
+            let manager = config
+                .get_manager(&app_type)
+                .ok_or_else(|| Self::app_not_found(&app_type))?;
+
+            if manager.current.is_empty() || manager.providers.contains_key(&manager.current) {
+                return Ok(manager.current.clone());
+            }
+        }
+
+        let app_type_clone = app_type.clone();
+        Self::run_transaction(state, move |config| {
+            let manager = config
+                .get_manager_mut(&app_type_clone)
+                .ok_or_else(|| Self::app_not_found(&app_type_clone))?;
+
+            if manager.current.is_empty() || manager.providers.contains_key(&manager.current) {
+                return Ok((manager.current.clone(), None));
+            }
+
+            let mut provider_list: Vec<_> = manager.providers.iter().collect();
+            provider_list.sort_by(|(_, a), (_, b)| match (a.sort_index, b.sort_index) {
+                (Some(idx_a), Some(idx_b)) => idx_a.cmp(&idx_b),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.created_at.cmp(&b.created_at),
+            });
+
+            manager.current = provider_list
+                .first()
+                .map(|(id, _)| (*id).clone())
+                .unwrap_or_default();
+
+            Ok((manager.current.clone(), None))
+        })
     }
 
     /// 新增供应商
@@ -1691,12 +1857,14 @@ impl ProviderService {
                 ));
             }
 
-            // 直接从 UsageScript 中获取凭证，不再从供应商配置提取
+            let (api_key, base_url) =
+                Self::resolve_usage_script_credentials(&provider, &app_type, usage_script)?;
+
             (
                 usage_script.code.clone(),
                 usage_script.timeout.unwrap_or(10),
-                usage_script.api_key.clone().unwrap_or_default(),
-                usage_script.base_url.clone().unwrap_or_default(),
+                api_key,
+                base_url,
                 usage_script.access_token.clone(),
                 usage_script.user_id.clone(),
             )
@@ -2448,11 +2616,7 @@ impl ProviderService {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn extract_credentials(
-        provider: &Provider,
-        app_type: &AppType,
-    ) -> Result<(String, String), AppError> {
+    fn extract_api_key(provider: &Provider, app_type: &AppType) -> Result<String, AppError> {
         match app_type {
             AppType::Claude => {
                 let env = provider
@@ -2467,8 +2631,7 @@ impl ProviderService {
                         )
                     })?;
 
-                let api_key = env
-                    .get("ANTHROPIC_AUTH_TOKEN")
+                env.get("ANTHROPIC_AUTH_TOKEN")
                     .or_else(|| env.get("ANTHROPIC_API_KEY"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
@@ -2477,22 +2640,8 @@ impl ProviderService {
                             "缺少 API Key",
                             "API key is missing",
                         )
-                    })?
-                    .to_string();
-
-                let base_url = env
-                    .get("ANTHROPIC_BASE_URL")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.base_url.missing",
-                            "缺少 ANTHROPIC_BASE_URL 配置",
-                            "Missing ANTHROPIC_BASE_URL configuration",
-                        )
-                    })?
-                    .to_string();
-
-                Ok((api_key, base_url))
+                    })
+                    .map(|s| s.to_string())
             }
             AppType::Codex => {
                 let auth = provider
@@ -2507,8 +2656,7 @@ impl ProviderService {
                         )
                     })?;
 
-                let api_key = auth
-                    .get("OPENAI_API_KEY")
+                auth.get("OPENAI_API_KEY")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
                         AppError::localized(
@@ -2516,65 +2664,121 @@ impl ProviderService {
                             "缺少 API Key",
                             "API key is missing",
                         )
-                    })?
-                    .to_string();
+                    })
+                    .map(|s| s.to_string())
+            }
+            AppType::Gemini => {
+                use crate::gemini_config::json_to_env;
 
+                let env_map = json_to_env(&provider.settings_config)?;
+
+                env_map.get("GEMINI_API_KEY").cloned().ok_or_else(|| {
+                    AppError::localized(
+                        "gemini.missing_api_key",
+                        "缺少 GEMINI_API_KEY",
+                        "Missing GEMINI_API_KEY",
+                    )
+                })
+            }
+        }
+    }
+
+    fn extract_base_url(provider: &Provider, app_type: &AppType) -> Result<String, AppError> {
+        match app_type {
+            AppType::Claude => provider
+                .settings_config
+                .get("env")
+                .and_then(|v| v.as_object())
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "provider.claude.env.missing",
+                        "配置格式错误: 缺少 env",
+                        "Invalid configuration: missing env section",
+                    )
+                })?
+                .get("ANTHROPIC_BASE_URL")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "provider.claude.base_url.missing",
+                        "缺少 ANTHROPIC_BASE_URL 配置",
+                        "Missing ANTHROPIC_BASE_URL configuration",
+                    )
+                })
+                .map(|s| s.to_string()),
+            AppType::Codex => {
                 let config_toml = provider
                     .settings_config
                     .get("config")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                let base_url = if config_toml.contains("base_url") {
-                    let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {
-                        AppError::localized(
-                            "provider.regex_init_failed",
-                            format!("正则初始化失败: {e}"),
-                            format!("Failed to initialize regex: {e}"),
-                        )
-                    })?;
-                    re.captures(config_toml)
-                        .and_then(|caps| caps.get(1))
-                        .map(|m| m.as_str().to_string())
-                        .ok_or_else(|| {
-                            AppError::localized(
-                                "provider.codex.base_url.invalid",
-                                "config.toml 中 base_url 格式错误",
-                                "base_url in config.toml has invalid format",
-                            )
-                        })?
-                } else {
+                if !config_toml.contains("base_url") {
                     return Err(AppError::localized(
                         "provider.codex.base_url.missing",
                         "config.toml 中缺少 base_url 配置",
                         "base_url is missing from config.toml",
                     ));
-                };
+                }
 
-                Ok((api_key, base_url))
+                let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {
+                    AppError::localized(
+                        "provider.regex_init_failed",
+                        format!("正则初始化失败: {e}"),
+                        format!("Failed to initialize regex: {e}"),
+                    )
+                })?;
+
+                re.captures(config_toml)
+                    .and_then(|caps| caps.get(1))
+                    .map(|m| m.as_str().to_string())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.codex.base_url.invalid",
+                            "config.toml 中 base_url 格式错误",
+                            "base_url in config.toml has invalid format",
+                        )
+                    })
             }
             AppType::Gemini => {
-                // 新增
                 use crate::gemini_config::json_to_env;
 
                 let env_map = json_to_env(&provider.settings_config)?;
 
-                let api_key = env_map.get("GEMINI_API_KEY").cloned().ok_or_else(|| {
-                    AppError::localized(
-                        "gemini.missing_api_key",
-                        "缺少 GEMINI_API_KEY",
-                        "Missing GEMINI_API_KEY",
-                    )
-                })?;
-
-                let base_url = env_map
+                Ok(env_map
                     .get("GOOGLE_GEMINI_BASE_URL")
                     .cloned()
-                    .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string());
-
-                Ok((api_key, base_url))
+                    .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string()))
             }
         }
+    }
+
+    fn extract_credentials(
+        provider: &Provider,
+        app_type: &AppType,
+    ) -> Result<(String, String), AppError> {
+        Ok((
+            Self::extract_api_key(provider, app_type)?,
+            Self::extract_base_url(provider, app_type)?,
+        ))
+    }
+
+    fn resolve_usage_script_credentials(
+        provider: &Provider,
+        app_type: &AppType,
+        usage_script: &crate::provider::UsageScript,
+    ) -> Result<(String, String), AppError> {
+        let api_key = match usage_script.api_key.as_deref().map(str::trim) {
+            Some(value) if !value.is_empty() => value.to_string(),
+            _ => Self::extract_api_key(provider, app_type)?,
+        };
+
+        let base_url = match usage_script.base_url.as_deref().map(str::trim) {
+            Some(value) if !value.is_empty() => value.to_string(),
+            _ => Self::extract_base_url(provider, app_type)?,
+        };
+
+        Ok((api_key, base_url))
     }
 
     fn app_not_found(app_type: &AppType) -> AppError {
@@ -2650,7 +2854,7 @@ impl ProviderService {
                 ));
             }
 
-            manager.providers.remove(provider_id);
+            manager.providers.shift_remove(provider_id);
         }
 
         state.save()

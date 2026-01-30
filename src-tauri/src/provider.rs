@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -35,6 +36,10 @@ pub struct Provider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "iconColor")]
     pub icon_color: Option<String>,
+    /// 是否加入故障转移队列
+    #[serde(default)]
+    #[serde(rename = "inFailoverQueue")]
+    pub in_failover_queue: bool,
 }
 
 impl Provider {
@@ -57,6 +62,7 @@ impl Provider {
             meta: None,
             icon: None,
             icon_color: None,
+            in_failover_queue: false,
         }
     }
 }
@@ -64,7 +70,7 @@ impl Provider {
 /// 供应商管理器
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderManager {
-    pub providers: HashMap<String, Provider>,
+    pub providers: IndexMap<String, Provider>,
     pub current: String,
 }
 
@@ -92,6 +98,10 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "userId")]
     pub user_id: Option<String>,
+    /// 模板类型（用于后端判断验证规则）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "templateType")]
+    pub template_type: Option<String>,
     /// 自动查询间隔（单位：分钟，0 表示禁用自动查询）
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "autoQueryInterval")]
@@ -132,6 +142,55 @@ pub struct UsageResult {
     pub error: Option<String>,
 }
 
+/// 供应商单独的模型测试配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderTestConfig {
+    /// 是否启用单独配置（false 时使用全局配置）
+    #[serde(default)]
+    pub enabled: bool,
+    /// 测试用的模型名称（覆盖全局配置）
+    #[serde(rename = "testModel", skip_serializing_if = "Option::is_none")]
+    pub test_model: Option<String>,
+    /// 超时时间（秒）
+    #[serde(rename = "timeoutSecs", skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+    /// 测试提示词
+    #[serde(rename = "testPrompt", skip_serializing_if = "Option::is_none")]
+    pub test_prompt: Option<String>,
+    /// 降级阈值（毫秒）
+    #[serde(
+        rename = "degradedThresholdMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub degraded_threshold_ms: Option<u64>,
+    /// 最大重试次数
+    #[serde(rename = "maxRetries", skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+}
+
+/// 供应商单独的代理配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderProxyConfig {
+    /// 是否启用单独配置（false 时使用全局/系统代理）
+    #[serde(default)]
+    pub enabled: bool,
+    /// 代理类型：http, https, socks5
+    #[serde(rename = "proxyType", skip_serializing_if = "Option::is_none")]
+    pub proxy_type: Option<String>,
+    /// 代理主机
+    #[serde(rename = "proxyHost", skip_serializing_if = "Option::is_none")]
+    pub proxy_host: Option<String>,
+    /// 代理端口
+    #[serde(rename = "proxyPort", skip_serializing_if = "Option::is_none")]
+    pub proxy_port: Option<u16>,
+    /// 代理用户名（可选）
+    #[serde(rename = "proxyUsername", skip_serializing_if = "Option::is_none")]
+    pub proxy_username: Option<String>,
+    /// 代理密码（可选）
+    #[serde(rename = "proxyPassword", skip_serializing_if = "Option::is_none")]
+    pub proxy_password: Option<String>,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -141,6 +200,9 @@ pub struct ProviderMeta {
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
+    /// 请求地址管理：测速后自动选择最佳端点
+    #[serde(rename = "endpointAutoSelect", skip_serializing_if = "Option::is_none")]
+    pub endpoint_auto_select: Option<bool>,
     /// 合作伙伴标记（前端使用 isPartner，保持字段名一致）
     #[serde(rename = "isPartner", skip_serializing_if = "Option::is_none")]
     pub is_partner: Option<bool>,
@@ -150,11 +212,29 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub partner_promotion_key: Option<String>,
+    /// 成本倍数（用于计算实际成本）
+    #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
+    pub cost_multiplier: Option<String>,
+    /// 计费模式来源（response/request）
+    #[serde(rename = "pricingModelSource", skip_serializing_if = "Option::is_none")]
+    pub pricing_model_source: Option<String>,
+    /// 每日消费限额（USD）
+    #[serde(rename = "limitDailyUsd", skip_serializing_if = "Option::is_none")]
+    pub limit_daily_usd: Option<String>,
+    /// 每月消费限额（USD）
+    #[serde(rename = "limitMonthlyUsd", skip_serializing_if = "Option::is_none")]
+    pub limit_monthly_usd: Option<String>,
+    /// 供应商单独的模型测试配置
+    #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
+    pub test_config: Option<ProviderTestConfig>,
+    /// 供应商单独的代理配置
+    #[serde(rename = "proxyConfig", skip_serializing_if = "Option::is_none")]
+    pub proxy_config: Option<ProviderProxyConfig>,
 }
 
 impl ProviderManager {
     /// 获取所有供应商
-    pub fn get_all_providers(&self) -> &HashMap<String, Provider> {
+    pub fn get_all_providers(&self) -> &IndexMap<String, Provider> {
         &self.providers
     }
 }

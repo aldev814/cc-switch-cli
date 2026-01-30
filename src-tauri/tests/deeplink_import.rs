@@ -41,10 +41,7 @@ fn deeplink_import_claude_provider_persists_to_config() {
         request.name.clone().expect("request name"),
         "provider name should match deeplink"
     );
-    assert_eq!(
-        provider.website_url.as_deref(),
-        request.homepage.as_deref()
-    );
+    assert_eq!(provider.website_url.as_deref(), request.homepage.as_deref());
     let auth_token = provider
         .settings_config
         .pointer("/env/ANTHROPIC_AUTH_TOKEN")
@@ -97,10 +94,7 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
         request.name.clone().expect("request name"),
         "provider name should match deeplink"
     );
-    assert_eq!(
-        provider.website_url.as_deref(),
-        request.homepage.as_deref()
-    );
+    assert_eq!(provider.website_url.as_deref(), request.homepage.as_deref());
     let auth_value = provider
         .settings_config
         .pointer("/auth/OPENAI_API_KEY")

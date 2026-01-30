@@ -341,6 +341,7 @@ fn add_provider(app_type: AppType) -> Result<(), AppError> {
         icon: None,
         icon_color: None,
         meta: None,
+        in_failover_queue: false,
     };
 
     // 6. 显示摘要并确认
@@ -449,7 +450,8 @@ fn edit_provider(app_type: AppType, id: &str) -> Result<(), AppError> {
         notes: optional.notes,
         icon: None,
         icon_color: None,
-        meta: original.meta, // 保留元数据
+        meta: original.meta,                           // 保留元数据
+        in_failover_queue: original.in_failover_queue, // 保留故障转移状态
     };
 
     // 7. 显示修改摘要并确认

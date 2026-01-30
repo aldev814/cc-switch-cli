@@ -33,7 +33,9 @@ pub fn import_provider_from_deeplink(
         AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
     })?;
     if api_key.is_empty() {
-        return Err(AppError::InvalidInput("API key cannot be empty".to_string()));
+        return Err(AppError::InvalidInput(
+            "API key cannot be empty".to_string(),
+        ));
     }
 
     let endpoint_str = merged_request.endpoint.as_ref().ok_or_else(|| {
@@ -69,7 +71,9 @@ pub fn import_provider_from_deeplink(
         AppError::InvalidInput("Homepage is required (either in URL or config file)".to_string())
     })?;
     if homepage.is_empty() {
-        return Err(AppError::InvalidInput("Homepage cannot be empty".to_string()));
+        return Err(AppError::InvalidInput(
+            "Homepage cannot be empty".to_string(),
+        ));
     }
 
     let name = merged_request
@@ -77,8 +81,8 @@ pub fn import_provider_from_deeplink(
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'name' field for provider".to_string()))?;
 
-    let app_type =
-        AppType::from_str(&app_str).map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
+    let app_type = AppType::from_str(&app_str)
+        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
 
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
@@ -144,6 +148,7 @@ fn build_provider_from_request(
         meta,
         icon: request.icon.clone(),
         icon_color: None,
+        in_failover_queue: false,
     })
 }
 
@@ -183,7 +188,10 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         language: "javascript".to_string(),
         code,
         timeout: Some(10),
-        api_key: request.usage_api_key.clone().or_else(|| request.api_key.clone()),
+        api_key: request
+            .usage_api_key
+            .clone()
+            .or_else(|| request.api_key.clone()),
         base_url: request.usage_base_url.clone().or_else(|| {
             let primary = get_primary_endpoint(request);
             if primary.is_empty() {
@@ -194,6 +202,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         }),
         access_token: request.usage_access_token.clone(),
         user_id: request.usage_user_id.clone(),
+        template_type: None,
         auto_query_interval: request.usage_auto_interval,
     };
 
@@ -326,11 +335,7 @@ pub fn parse_and_merge_config(
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         "" => return Ok(merged),
-        other => {
-            return Err(AppError::InvalidInput(format!(
-                "Invalid app type: {other}"
-            )))
-        }
+        other => return Err(AppError::InvalidInput(format!("Invalid app type: {other}"))),
     }
 
     Ok(merged)
@@ -343,7 +348,9 @@ fn merge_claude_config(
     let env = config
         .get("env")
         .and_then(|v| v.as_object())
-        .ok_or_else(|| AppError::InvalidInput("Claude config must have 'env' object".to_string()))?;
+        .ok_or_else(|| {
+            AppError::InvalidInput("Claude config must have 'env' object".to_string())
+        })?;
 
     if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(token) = env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()) {
