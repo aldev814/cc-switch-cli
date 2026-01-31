@@ -30,7 +30,7 @@
 
 <div align="center">
   <h3>首页</h3>
-  <img src="assets/screenshots/首页zh.png" alt="首页" width="70%"/>
+  <img src="assets/screenshots/home-zh.png" alt="首页" width="70%"/>
 </div>
 
 <br/>
@@ -41,8 +41,8 @@
     <th>设置</th>
   </tr>
   <tr>
-    <td><img src="assets/screenshots/切换zh.png" alt="切换" width="100%"/></td>
-    <td><img src="assets/screenshots/设置zh.png" alt="设置" width="100%"/></td>
+    <td><img src="assets/screenshots/switch-zh.png" alt="切换" width="100%"/></td>
+    <td><img src="assets/screenshots/settings-zh.png" alt="设置" width="100%"/></td>
   </tr>
 </table>
 
@@ -228,10 +228,10 @@ cc-switch env list                   # 列出环境变量
 
 ```bash
 # 下载 Universal Binary（推荐，支持 Apple Silicon + Intel）
-curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-v4.3.1-darwin-universal.tar.gz
+curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-darwin-universal.tar.gz
 
 # 解压
-tar -xzf cc-switch-cli-v4.3.1-darwin-universal.tar.gz
+tar -xzf cc-switch-cli-darwin-universal.tar.gz
 
 # 添加执行权限
 chmod +x cc-switch
@@ -247,10 +247,10 @@ xattr -cr /usr/local/bin/cc-switch
 
 ```bash
 # 下载
-curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-v4.3.1-linux-x64-musl.tar.gz
+curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-linux-x64-musl.tar.gz
 
 # 解压
-tar -xzf cc-switch-cli-v4.3.1-linux-x64-musl.tar.gz
+tar -xzf cc-switch-cli-linux-x64-musl.tar.gz
 
 # 添加执行权限
 chmod +x cc-switch
@@ -263,8 +263,8 @@ sudo mv cc-switch /usr/local/bin/
 
 ```bash
 # 适用于树莓派或 ARM 服务器
-curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-v4.3.1-linux-arm64-musl.tar.gz
-tar -xzf cc-switch-cli-v4.3.1-linux-arm64-musl.tar.gz
+curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-linux-arm64-musl.tar.gz
+tar -xzf cc-switch-cli-linux-arm64-musl.tar.gz
 chmod +x cc-switch
 sudo mv cc-switch /usr/local/bin/
 ```
@@ -273,7 +273,7 @@ sudo mv cc-switch /usr/local/bin/
 
 ```powershell
 # 下载 zip 文件
-# https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-v4.3.1-windows-x64.zip
+# https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-windows-x64.zip
 
 # 解压后将 cc-switch.exe 移动到 PATH 目录，例如：
 move cc-switch.exe C:\Windows\System32\
