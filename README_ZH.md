@@ -28,14 +28,19 @@
 
 ## 📸 截图预览
 
+<div align="center">
+  <h3>首页</h3>
+  <img src="assets/screenshots/首页zh.png" alt="首页" width="70%"/>
+</div>
+
+<br/>
+
 <table>
   <tr>
-    <th>首页</th>
     <th>切换</th>
     <th>设置</th>
   </tr>
   <tr>
-    <td><img src="assets/screenshots/首页zh.png" alt="首页" width="100%"/></td>
     <td><img src="assets/screenshots/切换zh.png" alt="切换" width="100%"/></td>
     <td><img src="assets/screenshots/设置zh.png" alt="设置" width="100%"/></td>
   </tr>

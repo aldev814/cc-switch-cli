@@ -28,14 +28,19 @@ This project is a **CLI fork** of [CC-Switch](https://github.com/farion1231/cc-s
 
 ## 📸 Screenshots
 
+<div align="center">
+  <h3>Home</h3>
+  <img src="assets/screenshots/首页en.png" alt="Home" width="70%"/>
+</div>
+
+<br/>
+
 <table>
   <tr>
-    <th>Home</th>
     <th>Switch</th>
     <th>Settings</th>
   </tr>
   <tr>
-    <td><img src="assets/screenshots/首页en.png" alt="Home" width="100%"/></td>
     <td><img src="assets/screenshots/切换en.png" alt="Switch" width="100%"/></td>
     <td><img src="assets/screenshots/设置en.png" alt="Settings" width="100%"/></td>
   </tr>
