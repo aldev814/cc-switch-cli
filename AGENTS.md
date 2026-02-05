@@ -10,6 +10,11 @@
 - `docs/`: design/refactor notes, release notes, and internal plans.
 - `scripts/`: release/versioning helpers (shell + Node scripts).
 
+## Maintenance Note (Temporary)
+
+- For now, we only actively maintain the interactive TUI flows. Non-interactive CLI commands/subcommands may lag behind and are not guaranteed to be up to date.
+- 暂时只维护交互式 TUI（Interactive Mode），非交互 CLI 命令先不维护。
+
 ## Build, Test, and Development Commands
 
 Run commands from the repo root unless noted.
