@@ -144,6 +144,7 @@ pub enum ProviderAddField {
     GeminiAuthType,
     GeminiApiKey,
     GeminiBaseUrl,
+    GeminiModel,
     IncludeCommonConfig,
 }
 
@@ -191,6 +192,7 @@ pub struct ProviderAddFormState {
     pub gemini_auth_type: GeminiAuthType,
     pub gemini_api_key: TextInput,
     pub gemini_base_url: TextInput,
+    pub gemini_model: TextInput,
 }
 
 impl ProviderAddFormState {
@@ -236,6 +238,7 @@ impl ProviderAddFormState {
             gemini_auth_type: GeminiAuthType::ApiKey,
             gemini_api_key: TextInput::new(""),
             gemini_base_url: TextInput::new(gemini_base_url_default),
+            gemini_model: TextInput::new(""),
         }
     }
 
@@ -330,6 +333,10 @@ impl ProviderAddFormState {
                     {
                         form.gemini_base_url.set(url);
                     }
+
+                    if let Some(model) = env.get("GEMINI_MODEL").and_then(|v| v.as_str()) {
+                        form.gemini_model.set(model);
+                    }
                 } else {
                     form.gemini_auth_type = GeminiAuthType::OAuth;
                 }
@@ -391,6 +398,7 @@ impl ProviderAddFormState {
                 if self.gemini_auth_type == GeminiAuthType::ApiKey {
                     fields.push(ProviderAddField::GeminiApiKey);
                     fields.push(ProviderAddField::GeminiBaseUrl);
+                    fields.push(ProviderAddField::GeminiModel);
                 }
             }
         }
@@ -413,6 +421,7 @@ impl ProviderAddFormState {
             ProviderAddField::CodexApiKey => Some(&self.codex_api_key),
             ProviderAddField::GeminiApiKey => Some(&self.gemini_api_key),
             ProviderAddField::GeminiBaseUrl => Some(&self.gemini_base_url),
+            ProviderAddField::GeminiModel => Some(&self.gemini_model),
             ProviderAddField::CodexWireApi
             | ProviderAddField::CodexRequiresOpenaiAuth
             | ProviderAddField::GeminiAuthType
@@ -434,6 +443,7 @@ impl ProviderAddFormState {
             ProviderAddField::CodexApiKey => Some(&mut self.codex_api_key),
             ProviderAddField::GeminiApiKey => Some(&mut self.gemini_api_key),
             ProviderAddField::GeminiBaseUrl => Some(&mut self.gemini_base_url),
+            ProviderAddField::GeminiModel => Some(&mut self.gemini_model),
             ProviderAddField::CodexWireApi
             | ProviderAddField::CodexRequiresOpenaiAuth
             | ProviderAddField::GeminiAuthType
@@ -468,6 +478,7 @@ impl ProviderAddFormState {
                 self.gemini_auth_type = defaults.gemini_auth_type;
                 self.gemini_api_key = defaults.gemini_api_key;
                 self.gemini_base_url = defaults.gemini_base_url;
+                self.gemini_model = defaults.gemini_model;
             }
             return;
         }
@@ -619,6 +630,7 @@ impl ProviderAddFormState {
                         env_obj.remove("GEMINI_API_KEY");
                         env_obj.remove("GOOGLE_GEMINI_BASE_URL");
                         env_obj.remove("GEMINI_BASE_URL");
+                        env_obj.remove("GEMINI_MODEL");
                     }
                     GeminiAuthType::ApiKey => {
                         set_or_remove_trimmed(
@@ -631,6 +643,7 @@ impl ProviderAddFormState {
                             "GOOGLE_GEMINI_BASE_URL",
                             &self.gemini_base_url.value,
                         );
+                        set_or_remove_trimmed(env_obj, "GEMINI_MODEL", &self.gemini_model.value);
                     }
                 }
             }
@@ -1079,6 +1092,42 @@ mod tests {
             provider["settingsConfig"]["env"]["GOOGLE_GEMINI_BASE_URL"],
             "https://generativelanguage.googleapis.com"
         );
+    }
+
+    #[test]
+    fn provider_add_form_gemini_includes_model_in_env_when_set() {
+        let mut form = ProviderAddFormState::new(AppType::Gemini);
+        form.id.set("g1");
+        form.name.set("Gemini Provider");
+        form.gemini_auth_type = GeminiAuthType::ApiKey;
+        form.gemini_api_key.set("AIza...");
+        form.gemini_base_url
+            .set("https://generativelanguage.googleapis.com");
+        form.gemini_model.set("gemini-3-pro-preview");
+
+        let provider = form.to_provider_json_value();
+        assert_eq!(
+            provider["settingsConfig"]["env"]["GEMINI_MODEL"],
+            "gemini-3-pro-preview"
+        );
+    }
+
+    #[test]
+    fn provider_add_form_gemini_oauth_does_not_include_model_or_api_key_env() {
+        let mut form = ProviderAddFormState::new(AppType::Gemini);
+        form.id.set("g1");
+        form.name.set("Gemini Provider");
+        form.gemini_auth_type = GeminiAuthType::OAuth;
+        form.gemini_model.set("gemini-3-pro-preview");
+
+        let provider = form.to_provider_json_value();
+        let env = provider["settingsConfig"]["env"]
+            .as_object()
+            .expect("settingsConfig.env should be an object");
+        assert!(env.get("GEMINI_API_KEY").is_none());
+        assert!(env.get("GOOGLE_GEMINI_BASE_URL").is_none());
+        assert!(env.get("GEMINI_BASE_URL").is_none());
+        assert!(env.get("GEMINI_MODEL").is_none());
     }
 
     #[test]
