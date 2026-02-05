@@ -673,6 +673,22 @@ pub mod texts {
         }
     }
 
+    pub fn tui_home_section_local_env_check() -> &'static str {
+        if is_chinese() {
+            "本地环境检查"
+        } else {
+            "Local environment check"
+        }
+    }
+
+    pub fn tui_local_env_not_installed() -> &'static str {
+        if is_chinese() {
+            "未安装或不可执行"
+        } else {
+            "not installed or not executable"
+        }
+    }
+
     pub fn tui_home_status_online() -> &'static str {
         if is_chinese() {
             "Online"
@@ -2159,6 +2175,30 @@ pub mod texts {
             "本次会话测速不可用。"
         } else {
             "Speedtest is disabled for this session."
+        }
+    }
+
+    pub fn tui_toast_local_env_check_unavailable(err: &str) -> String {
+        if is_chinese() {
+            format!("本地环境检查不可用: {err}")
+        } else {
+            format!("Local environment check unavailable: {err}")
+        }
+    }
+
+    pub fn tui_toast_local_env_check_disabled() -> &'static str {
+        if is_chinese() {
+            "本次会话本地环境检查不可用。"
+        } else {
+            "Local environment check is disabled for this session."
+        }
+    }
+
+    pub fn tui_toast_local_env_check_request_failed(err: &str) -> String {
+        if is_chinese() {
+            format!("本地环境检查刷新请求失败: {err}")
+        } else {
+            format!("Failed to enqueue local environment check: {err}")
         }
     }
 

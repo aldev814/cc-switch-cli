@@ -352,6 +352,7 @@ pub enum Action {
     SwitchRoute(Route),
     Quit,
     SetAppType(AppType),
+    LocalEnvRefresh,
 
     SkillsToggle {
         directory: String,
@@ -496,6 +497,9 @@ pub struct App {
     pub last_size: Size,
     pub tick: u64,
 
+    pub local_env_results: Vec<crate::services::local_env_check::ToolCheckResult>,
+    pub local_env_loading: bool,
+
     pub provider_idx: usize,
     pub mcp_idx: usize,
     pub prompt_idx: usize,
@@ -528,6 +532,8 @@ impl App {
             should_quit: false,
             last_size: Size::new(0, 0),
             tick: 0,
+            local_env_results: Vec::new(),
+            local_env_loading: true,
             provider_idx: 0,
             mcp_idx: 0,
             prompt_idx: 0,
@@ -764,7 +770,10 @@ impl App {
             Route::SkillsUnmanaged => self.on_skills_unmanaged_key(key),
             Route::SkillDetail { directory } => self.on_skill_detail_key(key, data, &directory),
             Route::Settings => self.on_settings_key(key),
-            Route::Main => Action::None,
+            Route::Main => match key.code {
+                KeyCode::Char('r') => Action::LocalEnvRefresh,
+                _ => Action::None,
+            },
         }
     }
 

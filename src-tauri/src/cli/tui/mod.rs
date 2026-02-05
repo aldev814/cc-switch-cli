@@ -37,6 +37,16 @@ enum SpeedtestMsg {
     },
 }
 
+enum LocalEnvReq {
+    Refresh,
+}
+
+enum LocalEnvMsg {
+    Finished {
+        result: Vec<crate::services::local_env_check::ToolCheckResult>,
+    },
+}
+
 enum SkillsReq {
     Discover { query: String },
     Install { spec: String, app: AppType },
@@ -56,6 +66,12 @@ enum SkillsMsg {
 struct SpeedtestSystem {
     req_tx: mpsc::Sender<String>,
     result_rx: mpsc::Receiver<SpeedtestMsg>,
+    _handle: std::thread::JoinHandle<()>,
+}
+
+struct LocalEnvSystem {
+    req_tx: mpsc::Sender<LocalEnvReq>,
+    result_rx: mpsc::Receiver<LocalEnvMsg>,
     _handle: std::thread::JoinHandle<()>,
 }
 
@@ -96,6 +112,27 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
         }
     };
 
+    let local_env = match start_local_env_system() {
+        Ok(system) => {
+            if let Err(err) = system.req_tx.send(LocalEnvReq::Refresh) {
+                app.local_env_loading = false;
+                app.push_toast(
+                    texts::tui_toast_local_env_check_request_failed(&err.to_string()),
+                    ToastKind::Warning,
+                );
+            }
+            Some(system)
+        }
+        Err(err) => {
+            app.local_env_loading = false;
+            app.push_toast(
+                texts::tui_toast_local_env_check_unavailable(&err.to_string()),
+                ToastKind::Warning,
+            );
+            None
+        }
+    };
+
     loop {
         app.last_size = terminal.size()?;
         terminal.draw(|f| ui::render(f, &app, &data))?;
@@ -104,6 +141,13 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
         if let Some(speedtest) = speedtest.as_ref() {
             while let Ok(msg) = speedtest.result_rx.try_recv() {
                 handle_speedtest_msg(&mut app, msg);
+            }
+        }
+
+        // Handle async local environment check results (non-blocking).
+        if let Some(local_env) = local_env.as_ref() {
+            while let Ok(msg) = local_env.result_rx.try_recv() {
+                handle_local_env_msg(&mut app, msg);
             }
         }
 
@@ -127,6 +171,7 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
                         &mut data,
                         speedtest.as_ref().map(|s| &s.req_tx),
                         skills.as_ref().map(|s| &s.req_tx),
+                        local_env.as_ref().map(|s| &s.req_tx),
                         action,
                     ) {
                         if matches!(
@@ -204,6 +249,15 @@ fn handle_speedtest_msg(app: &mut App, msg: SpeedtestMsg) {
     }
 }
 
+fn handle_local_env_msg(app: &mut App, msg: LocalEnvMsg) {
+    match msg {
+        LocalEnvMsg::Finished { result } => {
+            app.local_env_results = result;
+            app.local_env_loading = false;
+        }
+    }
+}
+
 fn handle_skills_msg(app: &mut App, data: &mut UiData, msg: SkillsMsg) -> Result<(), AppError> {
     match msg {
         SkillsMsg::DiscoverFinished { query, result } => match result {
@@ -262,6 +316,7 @@ fn handle_action(
     data: &mut UiData,
     speedtest_req_tx: Option<&mpsc::Sender<String>>,
     skills_req_tx: Option<&mpsc::Sender<SkillsReq>>,
+    local_env_req_tx: Option<&mpsc::Sender<LocalEnvReq>>,
     action: Action,
 ) -> Result<(), AppError> {
     match action {
@@ -274,6 +329,26 @@ fn handle_action(
             let next_data = UiData::load(&next)?;
             app.app_type = next;
             *data = next_data;
+            Ok(())
+        }
+        Action::LocalEnvRefresh => {
+            let Some(tx) = local_env_req_tx else {
+                app.local_env_loading = false;
+                app.push_toast(
+                    texts::tui_toast_local_env_check_disabled(),
+                    ToastKind::Warning,
+                );
+                return Ok(());
+            };
+
+            app.local_env_loading = true;
+            if let Err(err) = tx.send(LocalEnvReq::Refresh) {
+                app.local_env_loading = false;
+                app.push_toast(
+                    texts::tui_toast_local_env_check_request_failed(&err.to_string()),
+                    ToastKind::Warning,
+                );
+            }
             Ok(())
         }
         Action::SwitchRoute(route) => {
@@ -1052,6 +1127,40 @@ fn speedtest_worker_loop(rx: mpsc::Receiver<String>, tx: mpsc::Sender<SpeedtestM
             .map_err(|e| e.to_string());
 
         let _ = tx.send(SpeedtestMsg::Finished { url, result });
+    }
+}
+
+fn start_local_env_system() -> Result<LocalEnvSystem, AppError> {
+    let (result_tx, result_rx) = mpsc::channel::<LocalEnvMsg>();
+    let (req_tx, req_rx) = mpsc::channel::<LocalEnvReq>();
+
+    let handle = std::thread::Builder::new()
+        .name("cc-switch-local-env".to_string())
+        .spawn(move || local_env_worker_loop(req_rx, result_tx))
+        .map_err(|e| AppError::IoContext {
+            context: "failed to spawn local env worker thread".to_string(),
+            source: e,
+        })?;
+
+    Ok(LocalEnvSystem {
+        req_tx,
+        result_rx,
+        _handle: handle,
+    })
+}
+
+fn local_env_worker_loop(rx: mpsc::Receiver<LocalEnvReq>, tx: mpsc::Sender<LocalEnvMsg>) {
+    while let Ok(mut req) = rx.recv() {
+        for next in rx.try_iter() {
+            req = next;
+        }
+
+        match req {
+            LocalEnvReq::Refresh => {
+                let result = crate::services::local_env_check::check_local_environment();
+                let _ = tx.send(LocalEnvMsg::Finished { result });
+            }
+        }
     }
 }
 

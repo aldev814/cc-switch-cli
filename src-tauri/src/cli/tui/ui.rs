@@ -103,6 +103,34 @@ fn pad_to_display_width(label: &str, width: usize) -> String {
     }
 }
 
+fn truncate_to_display_width(text: &str, width: u16) -> String {
+    let width = width as usize;
+    if width == 0 {
+        return String::new();
+    }
+
+    if UnicodeWidthStr::width(text) <= width {
+        return text.to_string();
+    }
+
+    if width == 1 {
+        return "…".to_string();
+    }
+
+    let mut out = String::new();
+    let mut used = 0usize;
+    for c in text.chars() {
+        let w = UnicodeWidthChar::width(c).unwrap_or(0);
+        if used.saturating_add(w) > width.saturating_sub(1) {
+            break;
+        }
+        out.push(c);
+        used = used.saturating_add(w);
+    }
+    out.push('…');
+    out
+}
+
 fn kv_line<'a>(
     theme: &super::theme::Theme,
     label: &'a str,
@@ -1487,6 +1515,7 @@ fn provider_field_label_and_value(
         }
         ProviderAddField::GeminiApiKey => texts::tui_label_api_key().to_string(),
         ProviderAddField::GeminiBaseUrl => texts::tui_label_base_url().to_string(),
+        ProviderAddField::GeminiModel => texts::model_label().to_string(),
         ProviderAddField::IncludeCommonConfig => texts::tui_form_attach_common_config().to_string(),
     };
 
@@ -1870,14 +1899,6 @@ fn render_main(
         .filter(|s| s.server.apps.is_enabled_for(&app.app_type))
         .count();
 
-    let prompts_active = data
-        .prompts
-        .rows
-        .iter()
-        .find(|p| p.prompt.enabled)
-        .map(|p| p.prompt.name.as_str())
-        .unwrap_or(texts::none());
-
     let api_url = data
         .providers
         .rows
@@ -1956,24 +1977,6 @@ fn render_main(
         ),
     ];
 
-    let context_lines = vec![
-        kv_line(
-            theme,
-            texts::prompts_label(),
-            label_width,
-            vec![Span::styled(prompts_active.to_string(), value_style)],
-        ),
-        kv_line(
-            theme,
-            texts::tui_config_title(),
-            label_width,
-            vec![Span::styled(
-                data.config.config_path.display().to_string(),
-                value_style,
-            )],
-        ),
-    ];
-
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -1983,7 +1986,7 @@ fn render_main(
     let inner = block.inner(area);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(10), Constraint::Min(0)])
+        .constraints([Constraint::Length(13), Constraint::Min(0)])
         .split(inner);
 
     frame.render_widget(block, area);
@@ -1995,7 +1998,7 @@ fn render_main(
             Constraint::Length(1),
             Constraint::Length(5),
             Constraint::Length(1),
-            Constraint::Length(4),
+            Constraint::Length(6),
             Constraint::Min(0),
         ])
         .split(top);
@@ -2016,19 +2019,7 @@ fn render_main(
         top_chunks[1],
     );
 
-    // Session card.
-    frame.render_widget(
-        Paragraph::new(context_lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Plain)
-                    .border_style(card_border)
-                    .title(format!(" {} ", texts::tui_home_section_context())),
-            )
-            .wrap(Wrap { trim: false }),
-        top_chunks[3],
-    );
+    render_local_env_check_card(frame, app, top_chunks[3], theme, card_border);
 
     let logo_style = if theme.no_color {
         dracula_dark(theme)
@@ -2063,6 +2054,134 @@ fn render_main(
             .style(dracula_dark(theme).add_modifier(Modifier::ITALIC)),
         logo_chunks[2],
     );
+}
+
+fn render_local_env_check_card(
+    frame: &mut Frame<'_>,
+    app: &App,
+    area: Rect,
+    theme: &super::theme::Theme,
+    card_border: Style,
+) {
+    use crate::services::local_env_check::{LocalTool, ToolCheckStatus};
+
+    let outer = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(card_border)
+        .title(format!(" {} ", texts::tui_home_section_local_env_check()));
+    frame.render_widget(outer.clone(), area);
+    let inner = outer.inner(area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Length(2)])
+        .split(inner);
+
+    let cols0 = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[0]);
+    let cols1 = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[1]);
+
+    let cells = [
+        (LocalTool::Claude, "Claude", cols0[0]),
+        (LocalTool::Codex, "Codex", cols0[1]),
+        (LocalTool::Gemini, "Gemini", cols1[0]),
+        (LocalTool::OpenCode, "OpenCode", cols1[1]),
+    ];
+
+    for (tool, display_name, cell_area) in cells {
+        let status = if app.local_env_loading {
+            None
+        } else {
+            app.local_env_results
+                .iter()
+                .find(|r| r.tool == tool)
+                .map(|r| &r.status)
+        };
+
+        let (icon, icon_style) = if app.local_env_loading {
+            ("…", dracula_dark(theme))
+        } else {
+            match status {
+                Some(ToolCheckStatus::Ok { .. }) => (
+                    "✓",
+                    if theme.no_color {
+                        Style::default()
+                    } else {
+                        Style::default().fg(theme.ok)
+                    },
+                ),
+                Some(ToolCheckStatus::NotInstalledOrNotExecutable) | None => (
+                    "!",
+                    if theme.no_color {
+                        Style::default()
+                    } else {
+                        Style::default().fg(theme.warn)
+                    },
+                ),
+                Some(ToolCheckStatus::Error { .. }) => (
+                    "!",
+                    if theme.no_color {
+                        Style::default()
+                    } else {
+                        Style::default().fg(theme.warn)
+                    },
+                ),
+            }
+        };
+
+        let name_style = if theme.no_color {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        };
+
+        let detail_style = if theme.no_color {
+            Style::default()
+        } else {
+            dracula_dark(theme)
+        };
+
+        let value_style = dracula_cyan(theme);
+        let (detail_text, detail_line_style) = if app.local_env_loading {
+            ("".to_string(), detail_style)
+        } else {
+            match status {
+                Some(ToolCheckStatus::Ok { version }) => (version.clone(), value_style),
+                Some(ToolCheckStatus::NotInstalledOrNotExecutable) | None => (
+                    texts::tui_local_env_not_installed().to_string(),
+                    detail_style,
+                ),
+                Some(ToolCheckStatus::Error { message }) => (message.clone(), detail_style),
+            }
+        };
+
+        let detail_width = cell_area.width.saturating_sub(1);
+        let detail_text = truncate_to_display_width(&detail_text, detail_width);
+
+        let lines = vec![
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(">_ ", dracula_dark(theme)),
+                Span::styled(display_name.to_string(), name_style),
+                Span::raw(" "),
+                Span::styled(icon.to_string(), icon_style),
+            ]),
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(detail_text, detail_line_style),
+            ]),
+        ];
+
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), cell_area);
+    }
 }
 
 fn provider_rows_filtered<'a>(app: &App, data: &'a UiData) -> Vec<&'a ProviderRow> {
@@ -3397,6 +3516,23 @@ mod tests {
         let needle = "CC-Switch Interactive Mode";
         let count = all.matches(needle).count();
         assert_eq!(count, 1, "expected welcome title once, got {count}");
+    }
+
+    #[test]
+    fn home_shows_local_env_check_section() {
+        let _lock = lock_env();
+        let _no_color = EnvGuard::remove("NO_COLOR");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Main;
+        app.focus = Focus::Content;
+        let data = minimal_data(&app.app_type);
+
+        let buf = render(&app, &data);
+        let all = all_text(&buf);
+
+        assert!(all.contains("Local environment check"));
+        assert!(!all.contains("Session Context"));
     }
 
     #[test]
