@@ -36,11 +36,8 @@ This project is a **CLI fork** of [CC-Switch](https://github.com/farion1231/cc-s
       </a>
     </td>
     <td>
-      Thanks to <b>PackyCode</b> for sponsoring this project!<br/>
-      Website: <a href="https://www.packyapi.com">https://www.packyapi.com</a><br/>
-      Exclusive offer for CC-Switch CLI users: register via
-      <a href="https://www.packyapi.com/register?aff=cc-switch-cli">this link</a>
-      and use promo code <code>cc-switch-cli</code> when recharging to get <b>10% off</b>.
+      Thanks to <b>PackyCode</b> for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relay services for Claude Code, Codex, Gemini, and more. <br/>
+      PackyCode provides special discounts for our software users: register via <a href="https://www.packyapi.com/register?aff=cc-switch-cli">this link</a> and use promo code <code>cc-switch-cli</code> when recharging to get <b>10% off</b>.
     </td>
   </tr>
 </table>
