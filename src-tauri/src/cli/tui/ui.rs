@@ -1,3 +1,4 @@
+use chrono::{Local, TimeZone};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -14,7 +15,9 @@ use crate::app_config::AppType;
 use crate::cli::i18n::texts;
 
 use super::{
-    app::{App, ConfigItem, ConfirmAction, Focus, Overlay, ToastKind},
+    app::{
+        App, ConfigItem, ConfirmAction, EditorMode, Focus, Overlay, ToastKind, WebDavConfigItem,
+    },
     data::{McpRow, ProviderRow, UiData},
     form::{FormFocus, FormState, GeminiAuthType, McpAddField, ProviderAddField},
     route::{NavItem, Route},
@@ -129,6 +132,13 @@ fn truncate_to_display_width(text: &str, width: u16) -> String {
     }
     out.push('…');
     out
+}
+
+fn format_sync_time_local_to_minute(ts: i64) -> Option<String> {
+    Local
+        .timestamp_opt(ts, 0)
+        .single()
+        .map(|dt| dt.format("%Y/%m/%d %H:%M").to_string())
 }
 
 fn kv_line<'a>(
@@ -443,6 +453,7 @@ fn render_content(
         Route::Mcp => render_mcp(frame, app, data, content_area, theme),
         Route::Prompts => render_prompts(frame, app, data, content_area, theme),
         Route::Config => render_config(frame, app, data, content_area, theme),
+        Route::ConfigWebDav => render_config_webdav(frame, app, data, content_area, theme),
         Route::Skills => render_skills_installed(frame, app, data, content_area, theme),
         Route::SkillsDiscover => render_skills_discover(frame, app, data, content_area, theme),
         Route::SkillsRepos => render_skills_repos(frame, app, data, content_area, theme),
@@ -1982,6 +1993,81 @@ fn render_main(
         ),
     ];
 
+    let webdav = data.config.webdav_sync.as_ref();
+    let is_config_value_set = |value: &str| !value.trim().is_empty();
+    let webdav_enabled = webdav.map(|cfg| cfg.enabled).unwrap_or(false);
+    let is_configured = webdav
+        .map(|cfg| {
+            is_config_value_set(&cfg.base_url)
+                && is_config_value_set(&cfg.username)
+                && is_config_value_set(&cfg.password)
+        })
+        .unwrap_or(false);
+    let webdav_status = webdav.map(|cfg| &cfg.status);
+    let last_error = webdav_status
+        .and_then(|status| status.last_error.as_deref())
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    let has_error = webdav_enabled && is_configured && last_error.is_some();
+    let is_ok = webdav_enabled
+        && is_configured
+        && !has_error
+        && webdav_status
+            .and_then(|status| status.last_sync_at)
+            .is_some();
+
+    let webdav_status_text = if !webdav_enabled || !is_configured {
+        texts::tui_webdav_status_not_configured().to_string()
+    } else if has_error {
+        let detail = last_error
+            .map(|err| truncate_to_display_width(err, 22))
+            .unwrap_or_default();
+        if detail.is_empty() {
+            texts::tui_webdav_status_error().to_string()
+        } else {
+            texts::tui_webdav_status_error_with_detail(&detail)
+        }
+    } else if is_ok {
+        texts::tui_webdav_status_ok().to_string()
+    } else {
+        texts::tui_webdav_status_configured().to_string()
+    };
+
+    let webdav_status_style = if theme.no_color {
+        Style::default()
+    } else if has_error {
+        Style::default().fg(theme.warn)
+    } else if is_ok {
+        Style::default().fg(theme.ok)
+    } else {
+        dracula_dark(theme)
+    };
+
+    let last_sync_at = webdav_status.and_then(|status| status.last_sync_at);
+    let webdav_last_sync_text = last_sync_at
+        .and_then(format_sync_time_local_to_minute)
+        .unwrap_or_else(|| texts::tui_webdav_status_never_synced().to_string());
+    let webdav_last_sync_style = if last_sync_at.is_some() {
+        value_style
+    } else {
+        dracula_dark(theme)
+    };
+
+    let webdav_lines = vec![
+        kv_line(
+            theme,
+            texts::tui_label_webdav_status(),
+            label_width,
+            vec![Span::styled(webdav_status_text, webdav_status_style)],
+        ),
+        kv_line(
+            theme,
+            texts::tui_label_webdav_last_sync(),
+            label_width,
+            vec![Span::styled(webdav_last_sync_text, webdav_last_sync_style)],
+        ),
+    ];
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -1991,7 +2077,7 @@ fn render_main(
     let inner = block.inner(area);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(13), Constraint::Min(0)])
+        .constraints([Constraint::Length(18), Constraint::Min(0)])
         .split(inner);
 
     frame.render_widget(block, area);
@@ -2002,6 +2088,8 @@ fn render_main(
         .constraints([
             Constraint::Length(1),
             Constraint::Length(5),
+            Constraint::Length(1),
+            Constraint::Length(4),
             Constraint::Length(1),
             Constraint::Length(6),
             Constraint::Min(0),
@@ -2024,7 +2112,20 @@ fn render_main(
         top_chunks[1],
     );
 
-    render_local_env_check_card(frame, app, top_chunks[3], theme, card_border);
+    frame.render_widget(
+        Paragraph::new(webdav_lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Plain)
+                    .border_style(card_border)
+                    .title(format!(" {} ", texts::tui_home_section_webdav())),
+            )
+            .wrap(Wrap { trim: false }),
+        top_chunks[3],
+    );
+
+    render_local_env_check_card(frame, app, top_chunks[5], theme, card_border);
 
     let logo_style = if theme.no_color {
         dracula_dark(theme)
@@ -2621,7 +2722,32 @@ fn config_item_label(item: &ConfigItem) -> &'static str {
         ConfigItem::Restore => texts::tui_config_item_restore(),
         ConfigItem::Validate => texts::tui_config_item_validate(),
         ConfigItem::CommonSnippet => texts::tui_config_item_common_snippet(),
+        ConfigItem::WebDavSync => texts::tui_config_item_webdav_sync(),
         ConfigItem::Reset => texts::tui_config_item_reset(),
+    }
+}
+
+fn webdav_config_items_filtered(app: &App) -> Vec<WebDavConfigItem> {
+    let Some(q) = app.filter.query_lower() else {
+        return WebDavConfigItem::ALL.to_vec();
+    };
+    WebDavConfigItem::ALL
+        .iter()
+        .cloned()
+        .filter(|item| webdav_config_item_label(item).to_lowercase().contains(&q))
+        .collect()
+}
+
+fn webdav_config_item_label(item: &WebDavConfigItem) -> &'static str {
+    match item {
+        WebDavConfigItem::Settings => texts::tui_config_item_webdav_settings(),
+        WebDavConfigItem::CheckConnection => texts::tui_config_item_webdav_check_connection(),
+        WebDavConfigItem::Upload => texts::tui_config_item_webdav_upload(),
+        WebDavConfigItem::Download => texts::tui_config_item_webdav_download(),
+        WebDavConfigItem::Reset => texts::tui_config_item_webdav_reset(),
+        WebDavConfigItem::JianguoyunQuickSetup => {
+            texts::tui_config_item_webdav_jianguoyun_quick_setup()
+        }
     }
 }
 
@@ -2665,6 +2791,52 @@ fn render_config(
 
     let mut state = TableState::default();
     state.select(Some(app.config_idx));
+    frame.render_stateful_widget(table, inset_left(chunks[1], 2), &mut state);
+}
+
+fn render_config_webdav(
+    frame: &mut Frame<'_>,
+    app: &App,
+    _data: &UiData,
+    area: Rect,
+    theme: &super::theme::Theme,
+) {
+    let items = webdav_config_items_filtered(app);
+    let rows = items
+        .iter()
+        .map(|item| Row::new(vec![Cell::from(pad2(webdav_config_item_label(item)))]));
+
+    let outer = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(pane_border_style(app, Focus::Content, theme))
+        .title(texts::tui_config_webdav_title());
+    frame.render_widget(outer.clone(), area);
+    let inner = outer.inner(area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+
+    if app.focus == Focus::Content {
+        let mut keys = vec![("Enter", texts::tui_key_select())];
+        if matches!(
+            items.get(app.config_webdav_idx),
+            Some(WebDavConfigItem::Settings)
+        ) {
+            keys.push(("e", texts::tui_key_edit()));
+        }
+        render_key_bar_center(frame, chunks[0], theme, &keys);
+    }
+
+    let table = Table::new(rows, [Constraint::Min(10)])
+        .block(Block::default().borders(Borders::NONE))
+        .row_highlight_style(selection_style(theme))
+        .highlight_symbol(highlight_symbol(theme));
+
+    let mut state = TableState::default();
+    state.select(Some(app.config_webdav_idx));
     frame.render_stateful_widget(table, inset_left(chunks[1], 2), &mut state);
 }
 
@@ -2928,7 +3100,11 @@ fn render_overlay(frame: &mut Frame<'_>, app: &App, data: &UiData, theme: &super
             frame.render_widget(input_block, chunks[2]);
 
             let available = input_inner.width.saturating_sub(0) as usize;
-            let full = input.buffer.clone();
+            let full = if input.secret {
+                "•".repeat(input.buffer.chars().count())
+            } else {
+                input.buffer.clone()
+            };
             let cursor = full.chars().count();
             let start = cursor.saturating_sub(available);
             let visible = full.chars().skip(start).take(available).collect::<String>();
@@ -3841,6 +4017,84 @@ mod tests {
     }
 
     #[test]
+    fn home_shows_webdav_section() {
+        let _lock = lock_env();
+        let _no_color = EnvGuard::remove("NO_COLOR");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Main;
+        app.focus = Focus::Content;
+        let data = minimal_data(&app.app_type);
+
+        let buf = render(&app, &data);
+        let all = all_text(&buf);
+
+        assert!(all.contains("WebDAV Sync"));
+    }
+
+    #[test]
+    fn home_webdav_not_configured_does_not_show_error() {
+        let _lock = lock_env();
+        let _no_color = EnvGuard::remove("NO_COLOR");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Main;
+        app.focus = Focus::Content;
+
+        let mut data = minimal_data(&app.app_type);
+        data.config.webdav_sync = Some(crate::settings::WebDavSyncSettings {
+            enabled: true,
+            ..Default::default()
+        });
+
+        let buf = render(&app, &data);
+        let all = all_text(&buf);
+
+        assert!(all.contains("Not configured"));
+        assert!(!all.contains("Last error"));
+        assert!(!all.contains("Enabled"));
+    }
+
+    #[test]
+    fn home_webdav_failure_shows_error_details() {
+        let _lock = lock_env();
+        let _no_color = EnvGuard::remove("NO_COLOR");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Main;
+        app.focus = Focus::Content;
+
+        let mut data = minimal_data(&app.app_type);
+        let mut webdav = crate::settings::WebDavSyncSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        webdav.base_url = "https://dav.example".to_string();
+        webdav.username = "demo".to_string();
+        webdav.password = "app-pass".to_string();
+        webdav.status.last_error = Some("auth failed".to_string());
+        data.config.webdav_sync = Some(webdav);
+
+        let buf = render(&app, &data);
+        let all = all_text(&buf);
+
+        assert!(all.contains("Error (auth failed)"));
+        assert!(!all.contains("Last error"));
+        assert!(!all.contains("Enabled"));
+    }
+
+    #[test]
+    fn webdav_sync_time_formats_to_minute() {
+        let formatted = super::format_sync_time_local_to_minute(1_735_689_600)
+            .expect("timestamp should be formatable");
+        assert_eq!(formatted.len(), 16);
+        assert_eq!(&formatted[4..5], "/");
+        assert_eq!(&formatted[7..8], "/");
+        assert_eq!(&formatted[10..11], " ");
+        assert_eq!(&formatted[13..14], ":");
+    }
+
+    #[test]
     fn nav_does_not_show_manage_prefix_or_view_config() {
         let _lock = lock_env();
         let _no_color = EnvGuard::remove("NO_COLOR");
@@ -3938,6 +4192,7 @@ mod tests {
             prompt: "Enter value".to_string(),
             buffer: "hello".to_string(),
             submit: TextSubmit::ConfigBackupName,
+            secret: false,
         });
         let data = minimal_data(&app.app_type);
 

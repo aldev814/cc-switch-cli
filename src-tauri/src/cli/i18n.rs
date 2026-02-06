@@ -712,6 +712,78 @@ pub mod texts {
         }
     }
 
+    pub fn tui_home_section_webdav() -> &'static str {
+        if is_chinese() {
+            "WebDAV 同步"
+        } else {
+            "WebDAV Sync"
+        }
+    }
+
+    pub fn tui_label_webdav_status() -> &'static str {
+        if is_chinese() {
+            "状态"
+        } else {
+            "Status"
+        }
+    }
+
+    pub fn tui_label_webdav_last_sync() -> &'static str {
+        if is_chinese() {
+            "最近同步"
+        } else {
+            "Last sync"
+        }
+    }
+
+    pub fn tui_webdav_status_not_configured() -> &'static str {
+        if is_chinese() {
+            "未配置"
+        } else {
+            "Not configured"
+        }
+    }
+
+    pub fn tui_webdav_status_configured() -> &'static str {
+        if is_chinese() {
+            "已配置"
+        } else {
+            "Configured"
+        }
+    }
+
+    pub fn tui_webdav_status_never_synced() -> &'static str {
+        if is_chinese() {
+            "从未同步"
+        } else {
+            "Never synced"
+        }
+    }
+
+    pub fn tui_webdav_status_ok() -> &'static str {
+        if is_chinese() {
+            "正常"
+        } else {
+            "OK"
+        }
+    }
+
+    pub fn tui_webdav_status_error() -> &'static str {
+        if is_chinese() {
+            "失败"
+        } else {
+            "Error"
+        }
+    }
+
+    pub fn tui_webdav_status_error_with_detail(detail: &str) -> String {
+        if is_chinese() {
+            format!("失败（{detail}）")
+        } else {
+            format!("Error ({detail})")
+        }
+    }
+
     pub fn tui_local_env_not_installed() -> &'static str {
         if is_chinese() {
             "未安装或不可执行"
@@ -1853,6 +1925,142 @@ pub mod texts {
         }
     }
 
+    pub fn tui_config_item_webdav_sync() -> &'static str {
+        if is_chinese() {
+            "WebDAV 同步"
+        } else {
+            "WebDAV Sync"
+        }
+    }
+
+    pub fn tui_config_item_webdav_settings() -> &'static str {
+        if is_chinese() {
+            "WebDAV 同步设置（JSON）"
+        } else {
+            "WebDAV Sync Settings (JSON)"
+        }
+    }
+
+    pub fn tui_config_item_webdav_check_connection() -> &'static str {
+        if is_chinese() {
+            "WebDAV 检查连接"
+        } else {
+            "WebDAV Check Connection"
+        }
+    }
+
+    pub fn tui_config_item_webdav_upload() -> &'static str {
+        if is_chinese() {
+            "WebDAV 上传到远端"
+        } else {
+            "WebDAV Upload to Remote"
+        }
+    }
+
+    pub fn tui_config_item_webdav_download() -> &'static str {
+        if is_chinese() {
+            "WebDAV 下载到本地"
+        } else {
+            "WebDAV Download to Local"
+        }
+    }
+
+    pub fn tui_config_item_webdav_reset() -> &'static str {
+        if is_chinese() {
+            "重置 WebDAV 配置"
+        } else {
+            "Reset WebDAV Settings"
+        }
+    }
+
+    pub fn tui_config_item_webdav_jianguoyun_quick_setup() -> &'static str {
+        if is_chinese() {
+            "坚果云一键配置"
+        } else {
+            "Jianguoyun Quick Setup"
+        }
+    }
+
+    pub fn tui_webdav_settings_editor_title() -> &'static str {
+        if is_chinese() {
+            "编辑 WebDAV 同步设置（JSON）"
+        } else {
+            "Edit WebDAV Sync Settings (JSON)"
+        }
+    }
+
+    pub fn tui_config_webdav_title() -> &'static str {
+        if is_chinese() {
+            "WebDAV 同步"
+        } else {
+            "WebDAV Sync"
+        }
+    }
+
+    pub fn tui_webdav_jianguoyun_setup_title() -> &'static str {
+        if is_chinese() {
+            "坚果云一键配置"
+        } else {
+            "Jianguoyun Quick Setup"
+        }
+    }
+
+    pub fn tui_webdav_jianguoyun_username_prompt() -> &'static str {
+        if is_chinese() {
+            "请输入坚果云账号（通常是邮箱）："
+        } else {
+            "Enter your Jianguoyun account (usually email):"
+        }
+    }
+
+    pub fn tui_webdav_jianguoyun_app_password_prompt() -> &'static str {
+        if is_chinese() {
+            "请输入坚果云第三方应用密码："
+        } else {
+            "Enter your Jianguoyun app password:"
+        }
+    }
+
+    pub fn tui_webdav_loading_title_check_connection() -> &'static str {
+        if is_chinese() {
+            "WebDAV 检查连接"
+        } else {
+            "WebDAV Check Connection"
+        }
+    }
+
+    pub fn tui_webdav_loading_title_upload() -> &'static str {
+        if is_chinese() {
+            "WebDAV 上传"
+        } else {
+            "WebDAV Upload"
+        }
+    }
+
+    pub fn tui_webdav_loading_title_download() -> &'static str {
+        if is_chinese() {
+            "WebDAV 下载"
+        } else {
+            "WebDAV Download"
+        }
+    }
+
+    pub fn tui_webdav_loading_title_quick_setup() -> &'static str {
+        if is_chinese() {
+            "坚果云一键配置"
+        } else {
+            "Jianguoyun Quick Setup"
+        }
+    }
+
+    pub fn tui_webdav_loading_message() -> &'static str {
+        if is_chinese() {
+            "正在处理 WebDAV 请求，请稍候…"
+        } else {
+            "Processing WebDAV request, please wait..."
+        }
+    }
+
     pub fn tui_config_item_reset() -> &'static str {
         if is_chinese() {
             "重置配置"
@@ -2353,6 +2561,22 @@ pub mod texts {
         }
     }
 
+    pub fn tui_toast_webdav_worker_unavailable(err: &str) -> String {
+        if is_chinese() {
+            format!("WebDAV 后台任务不可用: {err}")
+        } else {
+            format!("WebDAV worker unavailable: {err}")
+        }
+    }
+
+    pub fn tui_toast_webdav_worker_disabled() -> &'static str {
+        if is_chinese() {
+            "本次会话 WebDAV 后台任务不可用。"
+        } else {
+            "WebDAV worker is disabled for this session."
+        }
+    }
+
     pub fn tui_error_skills_worker_unavailable() -> &'static str {
         if is_chinese() {
             "Skills 后台任务不可用。"
@@ -2765,6 +2989,94 @@ pub mod texts {
             format!("已恢复（恢复前备份: {pre_backup}）")
         } else {
             format!("Restored (pre-backup: {pre_backup})")
+        }
+    }
+
+    pub fn tui_toast_webdav_settings_saved() -> &'static str {
+        if is_chinese() {
+            "WebDAV 同步设置已保存。"
+        } else {
+            "WebDAV sync settings saved."
+        }
+    }
+
+    pub fn tui_toast_webdav_settings_cleared() -> &'static str {
+        if is_chinese() {
+            "WebDAV 同步设置已清空。"
+        } else {
+            "WebDAV sync settings cleared."
+        }
+    }
+
+    pub fn tui_toast_webdav_connection_ok() -> &'static str {
+        if is_chinese() {
+            "WebDAV 连接检查通过。"
+        } else {
+            "WebDAV connection check passed."
+        }
+    }
+
+    pub fn tui_toast_webdav_upload_ok() -> &'static str {
+        if is_chinese() {
+            "WebDAV 上传完成。"
+        } else {
+            "WebDAV upload completed."
+        }
+    }
+
+    pub fn tui_toast_webdav_download_ok() -> &'static str {
+        if is_chinese() {
+            "WebDAV 下载完成。"
+        } else {
+            "WebDAV download completed."
+        }
+    }
+
+    pub fn tui_toast_webdav_jianguoyun_configured() -> &'static str {
+        if is_chinese() {
+            "坚果云一键配置完成，连接检查通过。"
+        } else {
+            "Jianguoyun quick setup completed and connection verified."
+        }
+    }
+
+    pub fn tui_toast_webdav_username_empty() -> &'static str {
+        if is_chinese() {
+            "请输入 WebDAV 用户名。"
+        } else {
+            "Please enter a WebDAV username."
+        }
+    }
+
+    pub fn tui_toast_webdav_password_empty() -> &'static str {
+        if is_chinese() {
+            "请输入 WebDAV 第三方应用密码。"
+        } else {
+            "Please enter a WebDAV app password."
+        }
+    }
+
+    pub fn tui_toast_webdav_request_failed(err: &str) -> String {
+        if is_chinese() {
+            format!("WebDAV 请求提交失败: {err}")
+        } else {
+            format!("Failed to enqueue WebDAV request: {err}")
+        }
+    }
+
+    pub fn tui_toast_webdav_action_failed(action: &str, err: &str) -> String {
+        if is_chinese() {
+            format!("{action} 失败: {err}")
+        } else {
+            format!("{action} failed: {err}")
+        }
+    }
+
+    pub fn tui_toast_webdav_quick_setup_failed(err: &str) -> String {
+        if is_chinese() {
+            format!("坚果云一键配置已保存，但连接检查失败: {err}")
+        } else {
+            format!("Jianguoyun quick setup was saved, but connection check failed: {err}")
         }
     }
 

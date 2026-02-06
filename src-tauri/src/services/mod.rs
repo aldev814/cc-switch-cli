@@ -7,6 +7,7 @@ pub mod prompt;
 pub mod provider;
 pub mod skill;
 pub mod speedtest;
+pub mod webdav_sync;
 
 pub use config::ConfigService;
 pub use mcp::McpService;
@@ -14,3 +15,4 @@ pub use prompt::PromptService;
 pub use provider::ProviderService;
 pub use skill::SkillService;
 pub use speedtest::{EndpointLatency, SpeedtestService};
+pub use webdav_sync::{SyncDecision, WebDavSyncService, WebDavSyncSummary};

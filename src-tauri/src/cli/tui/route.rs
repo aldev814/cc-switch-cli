@@ -6,6 +6,7 @@ pub enum Route {
     Mcp,
     Prompts,
     Config,
+    ConfigWebDav,
     Skills,
     SkillsDiscover,
     SkillsRepos,

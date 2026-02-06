@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
+use url::Url;
 
 use crate::error::AppError;
 
@@ -28,6 +29,145 @@ pub struct SecurityAuthSettings {
 pub struct SecuritySettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<SecurityAuthSettings>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavSyncStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_remote_etag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_local_manifest_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_remote_manifest_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavSyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default = "default_webdav_remote_root")]
+    pub remote_root: String,
+    #[serde(default = "default_webdav_profile")]
+    pub profile: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default)]
+    pub device_id: String,
+    #[serde(default = "default_webdav_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default)]
+    pub status: WebDavSyncStatus,
+}
+
+fn default_webdav_remote_root() -> String {
+    "cc-switch-sync".to_string()
+}
+
+fn default_webdav_profile() -> String {
+    "default".to_string()
+}
+
+fn default_webdav_timeout_secs() -> u64 {
+    20
+}
+
+const JIANGUOYUN_WEBDAV_BASE_URL: &str = "https://dav.jianguoyun.com/dav";
+
+impl Default for WebDavSyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: String::new(),
+            remote_root: default_webdav_remote_root(),
+            profile: default_webdav_profile(),
+            username: String::new(),
+            password: String::new(),
+            device_id: format!("device-{}", chrono::Utc::now().timestamp()),
+            timeout_secs: default_webdav_timeout_secs(),
+            status: WebDavSyncStatus::default(),
+        }
+    }
+}
+
+impl WebDavSyncSettings {
+    pub fn jianguoyun_preset(username: &str, password: &str) -> Self {
+        let mut settings = Self {
+            enabled: true,
+            base_url: JIANGUOYUN_WEBDAV_BASE_URL.to_string(),
+            remote_root: default_webdav_remote_root(),
+            profile: default_webdav_profile(),
+            username: username.to_string(),
+            password: password.to_string(),
+            ..Self::default()
+        };
+        settings.normalize();
+        settings
+    }
+
+    pub fn normalize(&mut self) {
+        self.base_url = self.base_url.trim().trim_end_matches('/').to_string();
+        self.remote_root = sanitize_path_segment(&self.remote_root);
+        self.profile = sanitize_path_segment(&self.profile);
+        self.username = self.username.trim().to_string();
+        self.password = self.password.trim().to_string();
+        if self.timeout_secs == 0 {
+            self.timeout_secs = default_webdav_timeout_secs();
+        }
+        if self.device_id.trim().is_empty() {
+            self.device_id = format!("device-{}", chrono::Utc::now().timestamp());
+        } else {
+            self.device_id = self.device_id.trim().to_string();
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), AppError> {
+        if !self.enabled && self.base_url.is_empty() {
+            return Ok(());
+        }
+        if self.base_url.is_empty() {
+            return Err(AppError::InvalidInput(
+                "WebDAV base_url 不能为空".to_string(),
+            ));
+        }
+        let url = Url::parse(&self.base_url)
+            .map_err(|e| AppError::InvalidInput(format!("WebDAV base_url 不是合法 URL: {e}")))?;
+        let scheme = url.scheme();
+        if scheme != "http" && scheme != "https" {
+            return Err(AppError::InvalidInput(
+                "WebDAV base_url 仅支持 http/https".to_string(),
+            ));
+        }
+        if self.remote_root.is_empty() || self.profile.is_empty() {
+            return Err(AppError::InvalidInput(
+                "WebDAV remote_root/profile 不能为空".to_string(),
+            ));
+        }
+        if self.remote_root.contains("..") || self.profile.contains("..") {
+            return Err(AppError::InvalidInput(
+                "WebDAV remote_root/profile 不能包含 '..'".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn sanitize_path_segment(raw: &str) -> String {
+    raw.trim()
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// 应用设置结构，允许覆盖默认配置目录
@@ -60,6 +200,8 @@ pub struct AppSettings {
     pub skill_sync_method: crate::services::skill::SyncMethod,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub security: Option<SecuritySettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webdav_sync: Option<WebDavSyncSettings>,
     /// Claude 自定义端点列表
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints_claude: HashMap<String, CustomEndpoint>,
@@ -90,6 +232,7 @@ impl Default for AppSettings {
             launch_on_startup: false,
             skill_sync_method: crate::services::skill::SyncMethod::default(),
             security: None,
+            webdav_sync: None,
             custom_endpoints_claude: HashMap::new(),
             custom_endpoints_codex: HashMap::new(),
         }
@@ -134,6 +277,10 @@ impl AppSettings {
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh"))
             .map(|s| s.to_string());
+
+        if let Some(webdav) = self.webdav_sync.as_mut() {
+            webdav.normalize();
+        }
     }
 
     pub fn load() -> Self {
@@ -266,6 +413,30 @@ pub fn set_skill_sync_method(method: crate::services::skill::SyncMethod) -> Resu
     let mut settings = get_settings();
     settings.skill_sync_method = method;
     update_settings(settings)
+}
+
+pub fn get_webdav_sync_settings() -> Option<WebDavSyncSettings> {
+    settings_store()
+        .read()
+        .ok()
+        .and_then(|s| s.webdav_sync.clone())
+}
+
+pub fn set_webdav_sync_settings(webdav_sync: Option<WebDavSyncSettings>) -> Result<(), AppError> {
+    let mut settings = get_settings();
+    settings.webdav_sync = match webdav_sync {
+        Some(mut cfg) => {
+            cfg.normalize();
+            cfg.validate()?;
+            Some(cfg)
+        }
+        None => None,
+    };
+    update_settings(settings)
+}
+
+pub fn webdav_jianguoyun_preset(username: &str, password: &str) -> WebDavSyncSettings {
+    WebDavSyncSettings::jianguoyun_preset(username, password)
 }
 
 pub fn get_skip_claude_onboarding() -> bool {

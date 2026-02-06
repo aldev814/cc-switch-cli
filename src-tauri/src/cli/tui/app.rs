@@ -104,6 +104,8 @@ pub enum TextSubmit {
     SkillsInstallSpec,
     SkillsDiscoverQuery,
     SkillsRepoAdd,
+    WebDavJianguoyunUsername,
+    WebDavJianguoyunPassword,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +114,7 @@ pub struct TextInputState {
     pub prompt: String,
     pub buffer: String,
     pub submit: TextSubmit,
+    pub secret: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +183,7 @@ pub enum EditorSubmit {
     McpAdd,
     McpEdit { id: String },
     ConfigCommonSnippet,
+    ConfigWebDavSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -548,6 +552,14 @@ pub enum Action {
     ConfigValidate,
     ConfigCommonSnippetClear,
     ConfigCommonSnippetApply,
+    ConfigWebDavCheckConnection,
+    ConfigWebDavUpload,
+    ConfigWebDavDownload,
+    ConfigWebDavReset,
+    ConfigWebDavJianguoyunQuickSetup {
+        username: String,
+        password: String,
+    },
     ConfigReset,
 
     EditorSubmit {
@@ -572,11 +584,12 @@ pub enum ConfigItem {
     Restore,
     Validate,
     CommonSnippet,
+    WebDavSync,
     Reset,
 }
 
 impl ConfigItem {
-    pub const ALL: [ConfigItem; 9] = [
+    pub const ALL: [ConfigItem; 10] = [
         ConfigItem::Path,
         ConfigItem::ShowFull,
         ConfigItem::Export,
@@ -585,6 +598,7 @@ impl ConfigItem {
         ConfigItem::Restore,
         ConfigItem::Validate,
         ConfigItem::CommonSnippet,
+        ConfigItem::WebDavSync,
         ConfigItem::Reset,
     ];
 }
@@ -597,6 +611,27 @@ pub enum SettingsItem {
 
 impl SettingsItem {
     pub const ALL: [SettingsItem; 2] = [SettingsItem::Language, SettingsItem::SkipClaudeOnboarding];
+}
+
+#[derive(Debug, Clone)]
+pub enum WebDavConfigItem {
+    Settings,
+    CheckConnection,
+    Upload,
+    Download,
+    Reset,
+    JianguoyunQuickSetup,
+}
+
+impl WebDavConfigItem {
+    pub const ALL: [WebDavConfigItem; 6] = [
+        WebDavConfigItem::Settings,
+        WebDavConfigItem::CheckConnection,
+        WebDavConfigItem::Upload,
+        WebDavConfigItem::Download,
+        WebDavConfigItem::Reset,
+        WebDavConfigItem::JianguoyunQuickSetup,
+    ];
 }
 
 #[derive(Debug, Clone)]
@@ -631,6 +666,9 @@ pub struct App {
     pub skills_unmanaged_results: Vec<crate::services::skill::UnmanagedSkill>,
     pub skills_unmanaged_selected: HashSet<String>,
     pub config_idx: usize,
+    pub config_webdav_idx: usize,
+    pub webdav_quick_setup_username: Option<String>,
+    pub language_idx: usize,
     pub settings_idx: usize,
 }
 
@@ -665,6 +703,9 @@ impl App {
             skills_unmanaged_results: Vec::new(),
             skills_unmanaged_selected: HashSet::new(),
             config_idx: 0,
+            config_webdav_idx: 0,
+            webdav_quick_setup_username: None,
+            language_idx: 0,
             settings_idx: 0,
         }
     }
@@ -682,7 +723,7 @@ impl App {
             Route::Providers | Route::ProviderDetail { .. } => NavItem::Providers,
             Route::Mcp => NavItem::Mcp,
             Route::Prompts => NavItem::Prompts,
-            Route::Config => NavItem::Config,
+            Route::Config | Route::ConfigWebDav => NavItem::Config,
             Route::Skills
             | Route::SkillsDiscover
             | Route::SkillsRepos
@@ -883,6 +924,7 @@ impl App {
             Route::Mcp => self.on_mcp_key(key, data),
             Route::Prompts => self.on_prompts_key(key, data),
             Route::Config => self.on_config_key(key, data),
+            Route::ConfigWebDav => self.on_config_webdav_key(key, data),
             Route::Skills => self.on_skills_installed_key(key, data),
             Route::SkillsDiscover => self.on_skills_discover_key(key),
             Route::SkillsRepos => self.on_skills_repos_key(key, data),
@@ -953,6 +995,7 @@ impl App {
                     prompt: texts::tui_skills_discover_prompt().to_string(),
                     buffer: self.skills_discover_query.clone(),
                     submit: TextSubmit::SkillsDiscoverQuery,
+                    secret: false,
                 });
                 Action::None
             }
@@ -993,6 +1036,7 @@ impl App {
                     prompt: texts::tui_skills_repos_add_prompt().to_string(),
                     buffer: String::new(),
                     submit: TextSubmit::SkillsRepoAdd,
+                    secret: false,
                 });
                 Action::None
             }
@@ -1263,6 +1307,7 @@ impl App {
                     prompt: texts::tui_input_validate_command_prompt().to_string(),
                     buffer: String::new(),
                     submit: TextSubmit::McpValidateCommand,
+                    secret: false,
                 });
                 Action::None
             }
@@ -1423,6 +1468,7 @@ impl App {
                             prompt: texts::tui_config_export_prompt().to_string(),
                             buffer: texts::tui_default_config_export_path().to_string(),
                             submit: TextSubmit::ConfigExport,
+                            secret: false,
                         });
                         Action::None
                     }
@@ -1432,6 +1478,7 @@ impl App {
                             prompt: texts::tui_config_import_prompt().to_string(),
                             buffer: texts::tui_default_config_export_path().to_string(),
                             submit: TextSubmit::ConfigImport,
+                            secret: false,
                         });
                         Action::None
                     }
@@ -1441,6 +1488,7 @@ impl App {
                             prompt: texts::tui_config_backup_prompt().to_string(),
                             buffer: String::new(),
                             submit: TextSubmit::ConfigBackupName,
+                            secret: false,
                         });
                         Action::None
                     }
@@ -1467,11 +1515,91 @@ impl App {
                         });
                         Action::None
                     }
+                    ConfigItem::WebDavSync => self.push_route_and_switch(Route::ConfigWebDav),
                     ConfigItem::Reset => {
                         self.overlay = Overlay::Confirm(ConfirmOverlay {
                             title: texts::tui_config_reset_title().to_string(),
                             message: texts::tui_config_reset_message().to_string(),
                             action: ConfirmAction::ConfigReset,
+                        });
+                        Action::None
+                    }
+                }
+            }
+            _ => Action::None,
+        }
+    }
+
+    fn on_config_webdav_key(&mut self, key: KeyEvent, data: &UiData) -> Action {
+        let items = visible_webdav_config_items(&self.filter);
+        match key.code {
+            KeyCode::Up => {
+                self.config_webdav_idx = self.config_webdav_idx.saturating_sub(1);
+                Action::None
+            }
+            KeyCode::Down => {
+                if !items.is_empty() {
+                    self.config_webdav_idx = (self.config_webdav_idx + 1).min(items.len() - 1);
+                }
+                Action::None
+            }
+            KeyCode::Char('e') => {
+                let Some(item) = items.get(self.config_webdav_idx) else {
+                    return Action::None;
+                };
+                if matches!(item, WebDavConfigItem::Settings) {
+                    let webdav_json = match data.config.webdav_sync.as_ref() {
+                        Some(cfg) => {
+                            serde_json::to_string_pretty(cfg).unwrap_or_else(|_| "{}".to_string())
+                        }
+                        None => serde_json::to_string_pretty(
+                            &crate::settings::WebDavSyncSettings::default(),
+                        )
+                        .unwrap_or_else(|_| "{}".to_string()),
+                    };
+                    self.open_editor(
+                        texts::tui_webdav_settings_editor_title(),
+                        EditorKind::Json,
+                        webdav_json,
+                        EditorSubmit::ConfigWebDavSettings,
+                    );
+                }
+                Action::None
+            }
+            KeyCode::Enter => {
+                let Some(item) = items.get(self.config_webdav_idx) else {
+                    return Action::None;
+                };
+                match item {
+                    WebDavConfigItem::Settings => {
+                        let webdav_json = match data.config.webdav_sync.as_ref() {
+                            Some(cfg) => serde_json::to_string_pretty(cfg)
+                                .unwrap_or_else(|_| "{}".to_string()),
+                            None => serde_json::to_string_pretty(
+                                &crate::settings::WebDavSyncSettings::default(),
+                            )
+                            .unwrap_or_else(|_| "{}".to_string()),
+                        };
+                        self.open_editor(
+                            texts::tui_webdav_settings_editor_title(),
+                            EditorKind::Json,
+                            webdav_json,
+                            EditorSubmit::ConfigWebDavSettings,
+                        );
+                        Action::None
+                    }
+                    WebDavConfigItem::CheckConnection => Action::ConfigWebDavCheckConnection,
+                    WebDavConfigItem::Upload => Action::ConfigWebDavUpload,
+                    WebDavConfigItem::Download => Action::ConfigWebDavDownload,
+                    WebDavConfigItem::Reset => Action::ConfigWebDavReset,
+                    WebDavConfigItem::JianguoyunQuickSetup => {
+                        self.webdav_quick_setup_username = None;
+                        self.overlay = Overlay::TextInput(TextInputState {
+                            title: texts::tui_webdav_jianguoyun_setup_title().to_string(),
+                            prompt: texts::tui_webdav_jianguoyun_username_prompt().to_string(),
+                            buffer: String::new(),
+                            submit: TextSubmit::WebDavJianguoyunUsername,
+                            secret: false,
                         });
                         Action::None
                     }
@@ -1607,6 +1735,12 @@ impl App {
             },
             Overlay::TextInput(input) => match key.code {
                 KeyCode::Esc => {
+                    if matches!(
+                        input.submit,
+                        TextSubmit::WebDavJianguoyunUsername | TextSubmit::WebDavJianguoyunPassword
+                    ) {
+                        self.webdav_quick_setup_username = None;
+                    }
                     self.overlay = Overlay::None;
                     Action::None
                 }
@@ -1677,6 +1811,63 @@ impl App {
                                 return Action::None;
                             }
                             Action::SkillsRepoAdd { spec: raw }
+                        }
+                        TextSubmit::WebDavJianguoyunUsername => {
+                            if raw.is_empty() {
+                                self.push_toast(
+                                    texts::tui_toast_webdav_username_empty(),
+                                    ToastKind::Warning,
+                                );
+                                self.overlay = Overlay::TextInput(TextInputState {
+                                    title: texts::tui_webdav_jianguoyun_setup_title().to_string(),
+                                    prompt: texts::tui_webdav_jianguoyun_username_prompt()
+                                        .to_string(),
+                                    buffer: String::new(),
+                                    submit: TextSubmit::WebDavJianguoyunUsername,
+                                    secret: false,
+                                });
+                                return Action::None;
+                            }
+                            self.webdav_quick_setup_username = Some(raw);
+                            self.overlay = Overlay::TextInput(TextInputState {
+                                title: texts::tui_webdav_jianguoyun_setup_title().to_string(),
+                                prompt: texts::tui_webdav_jianguoyun_app_password_prompt()
+                                    .to_string(),
+                                buffer: String::new(),
+                                submit: TextSubmit::WebDavJianguoyunPassword,
+                                secret: true,
+                            });
+                            Action::None
+                        }
+                        TextSubmit::WebDavJianguoyunPassword => {
+                            if raw.is_empty() {
+                                self.push_toast(
+                                    texts::tui_toast_webdav_password_empty(),
+                                    ToastKind::Warning,
+                                );
+                                self.overlay = Overlay::TextInput(TextInputState {
+                                    title: texts::tui_webdav_jianguoyun_setup_title().to_string(),
+                                    prompt: texts::tui_webdav_jianguoyun_app_password_prompt()
+                                        .to_string(),
+                                    buffer: String::new(),
+                                    submit: TextSubmit::WebDavJianguoyunPassword,
+                                    secret: true,
+                                });
+                                return Action::None;
+                            }
+                            let username =
+                                self.webdav_quick_setup_username.take().unwrap_or_default();
+                            if username.trim().is_empty() {
+                                self.push_toast(
+                                    texts::tui_toast_webdav_username_empty(),
+                                    ToastKind::Warning,
+                                );
+                                return Action::None;
+                            }
+                            Action::ConfigWebDavJianguoyunQuickSetup {
+                                username,
+                                password: raw,
+                            }
                         }
                     }
                 }
@@ -2756,6 +2947,13 @@ impl App {
         } else {
             self.config_idx = self.config_idx.min(config_len - 1);
         }
+
+        let config_webdav_len = visible_webdav_config_items(&self.filter).len();
+        if config_webdav_len == 0 {
+            self.config_webdav_idx = 0;
+        } else {
+            self.config_webdav_idx = self.config_webdav_idx.min(config_webdav_len - 1);
+        }
     }
 }
 
@@ -2767,6 +2965,7 @@ fn route_has_content_list(route: &Route) -> bool {
             | Route::Mcp
             | Route::Prompts
             | Route::Config
+            | Route::ConfigWebDav
             | Route::Skills
             | Route::SkillsDiscover
             | Route::SkillsRepos
@@ -2929,7 +3128,34 @@ fn config_item_label(item: &ConfigItem) -> &'static str {
         ConfigItem::Restore => crate::cli::i18n::texts::tui_config_item_restore(),
         ConfigItem::Validate => crate::cli::i18n::texts::tui_config_item_validate(),
         ConfigItem::CommonSnippet => crate::cli::i18n::texts::tui_config_item_common_snippet(),
+        ConfigItem::WebDavSync => crate::cli::i18n::texts::tui_config_item_webdav_sync(),
         ConfigItem::Reset => crate::cli::i18n::texts::tui_config_item_reset(),
+    }
+}
+
+fn visible_webdav_config_items(filter: &FilterState) -> Vec<WebDavConfigItem> {
+    let all = WebDavConfigItem::ALL.to_vec();
+    let Some(q) = filter.query_lower() else {
+        return all;
+    };
+
+    all.into_iter()
+        .filter(|item| webdav_config_item_label(item).to_lowercase().contains(&q))
+        .collect()
+}
+
+fn webdav_config_item_label(item: &WebDavConfigItem) -> &'static str {
+    match item {
+        WebDavConfigItem::Settings => crate::cli::i18n::texts::tui_config_item_webdav_settings(),
+        WebDavConfigItem::CheckConnection => {
+            crate::cli::i18n::texts::tui_config_item_webdav_check_connection()
+        }
+        WebDavConfigItem::Upload => crate::cli::i18n::texts::tui_config_item_webdav_upload(),
+        WebDavConfigItem::Download => crate::cli::i18n::texts::tui_config_item_webdav_download(),
+        WebDavConfigItem::Reset => crate::cli::i18n::texts::tui_config_item_webdav_reset(),
+        WebDavConfigItem::JianguoyunQuickSetup => {
+            crate::cli::i18n::texts::tui_config_item_webdav_jianguoyun_quick_setup()
+        }
     }
 }
 
@@ -3061,7 +3287,10 @@ mod tests {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Config;
         app.focus = Focus::Content;
-        app.config_idx = 7; // ConfigItem::CommonSnippet in ConfigItem::ALL
+        app.config_idx = ConfigItem::ALL
+            .iter()
+            .position(|item| matches!(item, ConfigItem::CommonSnippet))
+            .expect("CommonSnippet missing from ConfigItem::ALL");
 
         let action = app.on_key(key(KeyCode::Char('e')), &data());
         assert!(matches!(action, Action::None));
@@ -3498,6 +3727,205 @@ mod tests {
         assert!(matches!(
             app.editor.as_ref().map(|e| e.kind),
             Some(EditorKind::Json)
+        ));
+    }
+
+    #[test]
+    fn config_webdav_item_opens_second_level_menu() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Config;
+        app.focus = Focus::Content;
+        app.config_idx = ConfigItem::ALL
+            .iter()
+            .position(|item| matches!(item, ConfigItem::WebDavSync))
+            .expect("WebDavSync missing from ConfigItem::ALL");
+
+        let data = UiData::default();
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::SwitchRoute(Route::ConfigWebDav)));
+        assert!(matches!(app.route, Route::ConfigWebDav));
+    }
+
+    #[test]
+    fn config_webdav_settings_opens_json_editor_in_second_level_menu() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::ConfigWebDav;
+        app.focus = Focus::Content;
+        app.config_webdav_idx = WebDavConfigItem::ALL
+            .iter()
+            .position(|item| matches!(item, WebDavConfigItem::Settings))
+            .expect("Settings missing from WebDavConfigItem::ALL");
+
+        let mut data = UiData::default();
+        data.config.webdav_sync = Some(crate::settings::WebDavSyncSettings {
+            enabled: true,
+            base_url: "https://dav.example.com".to_string(),
+            ..crate::settings::WebDavSyncSettings::default()
+        });
+
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.editor.as_ref().map(|e| &e.submit),
+            Some(EditorSubmit::ConfigWebDavSettings)
+        ));
+    }
+
+    #[test]
+    fn config_webdav_submenu_items_emit_expected_actions() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::ConfigWebDav;
+        app.focus = Focus::Content;
+        let data = UiData::default();
+
+        let check_idx = WebDavConfigItem::ALL
+            .iter()
+            .position(|item| matches!(item, WebDavConfigItem::CheckConnection))
+            .expect("WebDavCheckConnection missing");
+        app.config_webdav_idx = check_idx;
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter), &data),
+            Action::ConfigWebDavCheckConnection
+        ));
+
+        let upload_idx = WebDavConfigItem::ALL
+            .iter()
+            .position(|item| matches!(item, WebDavConfigItem::Upload))
+            .expect("WebDavUpload missing");
+        app.config_webdav_idx = upload_idx;
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter), &data),
+            Action::ConfigWebDavUpload
+        ));
+
+        let download_idx = WebDavConfigItem::ALL
+            .iter()
+            .position(|item| matches!(item, WebDavConfigItem::Download))
+            .expect("WebDavDownload missing");
+        app.config_webdav_idx = download_idx;
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter), &data),
+            Action::ConfigWebDavDownload
+        ));
+
+        let reset_idx = WebDavConfigItem::ALL
+            .iter()
+            .position(|item| matches!(item, WebDavConfigItem::Reset))
+            .expect("WebDavReset missing");
+        app.config_webdav_idx = reset_idx;
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter), &data),
+            Action::ConfigWebDavReset
+        ));
+
+        assert_eq!(
+            WebDavConfigItem::ALL.len(),
+            6,
+            "WebDav submenu should include Jianguoyun quick setup"
+        );
+    }
+
+    #[test]
+    fn config_webdav_quick_setup_requires_username_then_password() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::ConfigWebDav;
+        app.focus = Focus::Content;
+
+        let quick_setup_idx = WebDavConfigItem::ALL
+            .iter()
+            .position(|item| matches!(item, WebDavConfigItem::JianguoyunQuickSetup))
+            .expect("JianguoyunQuickSetup missing");
+        app.config_webdav_idx = quick_setup_idx;
+
+        let data = UiData::default();
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::TextInput(TextInputState {
+                submit: TextSubmit::WebDavJianguoyunUsername,
+                ..
+            })
+        ));
+
+        if let Overlay::TextInput(ref mut input) = app.overlay {
+            input.buffer = "demo@nutstore.com".to_string();
+        }
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::TextInput(TextInputState {
+                submit: TextSubmit::WebDavJianguoyunPassword,
+                secret: true,
+                ..
+            })
+        ));
+
+        if let Overlay::TextInput(ref mut input) = app.overlay {
+            input.buffer = "app-password".to_string();
+        }
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(
+            action,
+            Action::ConfigWebDavJianguoyunQuickSetup {
+                username,
+                password
+            } if username == "demo@nutstore.com" && password == "app-password"
+        ));
+    }
+
+    #[test]
+    fn config_webdav_quick_setup_empty_inputs_keep_prompt_open() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::ConfigWebDav;
+        app.focus = Focus::Content;
+
+        let quick_setup_idx = WebDavConfigItem::ALL
+            .iter()
+            .position(|item| matches!(item, WebDavConfigItem::JianguoyunQuickSetup))
+            .expect("JianguoyunQuickSetup missing");
+        app.config_webdav_idx = quick_setup_idx;
+
+        let data = UiData::default();
+        let _ = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(
+            app.overlay,
+            Overlay::TextInput(TextInputState {
+                submit: TextSubmit::WebDavJianguoyunUsername,
+                ..
+            })
+        ));
+
+        if let Overlay::TextInput(ref mut input) = app.overlay {
+            input.buffer = "   ".to_string();
+        }
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::TextInput(TextInputState {
+                submit: TextSubmit::WebDavJianguoyunUsername,
+                ..
+            })
+        ));
+
+        if let Overlay::TextInput(ref mut input) = app.overlay {
+            input.buffer = "demo@nutstore.com".to_string();
+        }
+        let _ = app.on_key(key(KeyCode::Enter), &data);
+        if let Overlay::TextInput(ref mut input) = app.overlay {
+            input.buffer = "   ".to_string();
+        }
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::TextInput(TextInputState {
+                submit: TextSubmit::WebDavJianguoyunPassword,
+                secret: true,
+                ..
+            })
         ));
     }
 

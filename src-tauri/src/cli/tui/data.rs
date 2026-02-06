@@ -53,6 +53,7 @@ pub struct ConfigSnapshot {
     pub config_dir: PathBuf,
     pub backups: Vec<BackupInfo>,
     pub common_snippet: String,
+    pub webdav_sync: Option<crate::settings::WebDavSyncSettings>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -211,6 +212,7 @@ fn load_config_snapshot(state: &AppState, app_type: &AppType) -> Result<ConfigSn
         config_dir,
         backups,
         common_snippet,
+        webdav_sync: crate::settings::get_webdav_sync_settings(),
     })
 }
 

@@ -19,7 +19,11 @@ use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::{
     skill::SkillRepo, ConfigService, EndpointLatency, McpService, PromptService, ProviderService,
-    SkillService,
+    SkillService, SyncDecision, WebDavSyncService,
+};
+use crate::settings::{
+    get_webdav_sync_settings, set_webdav_sync_settings, webdav_jianguoyun_preset,
+    WebDavSyncSettings,
 };
 
 use app::{Action, App, EditorSubmit, Overlay, TextViewState, ToastKind};
@@ -64,6 +68,49 @@ enum SkillsMsg {
     },
 }
 
+#[derive(Debug, Clone)]
+enum WebDavReqKind {
+    CheckConnection,
+    Upload,
+    Download,
+    JianguoyunQuickSetup { username: String, password: String },
+}
+
+#[derive(Debug, Clone)]
+struct WebDavReq {
+    request_id: u64,
+    kind: WebDavReqKind,
+}
+
+#[derive(Debug, Clone)]
+enum WebDavDone {
+    ConnectionChecked,
+    Uploaded {
+        decision: SyncDecision,
+        message: String,
+    },
+    Downloaded {
+        decision: SyncDecision,
+        message: String,
+    },
+    JianguoyunConfigured,
+}
+
+#[derive(Debug, Clone)]
+enum WebDavErr {
+    Generic(String),
+    QuickSetupSave(String),
+    QuickSetupCheck(String),
+}
+
+enum WebDavMsg {
+    Finished {
+        request_id: u64,
+        req: WebDavReqKind,
+        result: Result<WebDavDone, WebDavErr>,
+    },
+}
+
 struct SpeedtestSystem {
     req_tx: mpsc::Sender<String>,
     result_rx: mpsc::Receiver<SpeedtestMsg>,
@@ -82,6 +129,12 @@ struct SkillsSystem {
     _handle: std::thread::JoinHandle<()>,
 }
 
+struct WebDavSystem {
+    req_tx: mpsc::Sender<WebDavReq>,
+    result_rx: mpsc::Receiver<WebDavMsg>,
+    _handle: std::thread::JoinHandle<()>,
+}
+
 pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
     let _panic_hook = PanicRestoreHookGuard::install();
     let mut terminal = TuiTerminal::new()?;
@@ -90,6 +143,8 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
 
     let tick_rate = Duration::from_millis(200);
     let mut last_tick = Instant::now();
+    let mut webdav_request_seq: u64 = 0;
+    let mut webdav_loading_request_id: Option<u64> = None;
 
     let speedtest = match start_speedtest_system() {
         Ok(system) => Some(system),
@@ -134,6 +189,17 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
         }
     };
 
+    let webdav = match start_webdav_system() {
+        Ok(system) => Some(system),
+        Err(err) => {
+            app.push_toast(
+                texts::tui_toast_webdav_worker_unavailable(&err.to_string()),
+                ToastKind::Warning,
+            );
+            None
+        }
+    };
+
     loop {
         app.last_size = terminal.size()?;
         terminal.draw(|f| ui::render(f, &app, &data))?;
@@ -161,6 +227,17 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
             }
         }
 
+        // Handle async WebDAV results (non-blocking).
+        if let Some(webdav) = webdav.as_ref() {
+            while let Ok(msg) = webdav.result_rx.try_recv() {
+                if let Err(err) =
+                    handle_webdav_msg(&mut app, &mut data, &mut webdav_loading_request_id, msg)
+                {
+                    app.push_toast(err.to_string(), ToastKind::Error);
+                }
+            }
+        }
+
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout).map_err(|e| AppError::Message(e.to_string()))? {
             match event::read().map_err(|e| AppError::Message(e.to_string()))? {
@@ -173,6 +250,9 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
                         speedtest.as_ref().map(|s| &s.req_tx),
                         skills.as_ref().map(|s| &s.req_tx),
                         local_env.as_ref().map(|s| &s.req_tx),
+                        webdav.as_ref().map(|s| &s.req_tx),
+                        &mut webdav_request_seq,
+                        &mut webdav_loading_request_id,
                         action,
                     ) {
                         if matches!(
@@ -311,6 +391,151 @@ fn handle_skills_msg(app: &mut App, data: &mut UiData, msg: SkillsMsg) -> Result
     Ok(())
 }
 
+fn is_webdav_loading_overlay(app: &App) -> bool {
+    match &app.overlay {
+        Overlay::Loading { title, .. } => {
+            title == texts::tui_webdav_loading_title_check_connection()
+                || title == texts::tui_webdav_loading_title_upload()
+                || title == texts::tui_webdav_loading_title_download()
+                || title == texts::tui_webdav_loading_title_quick_setup()
+        }
+        _ => false,
+    }
+}
+
+fn handle_webdav_msg(
+    app: &mut App,
+    data: &mut UiData,
+    webdav_loading_request_id: &mut Option<u64>,
+    msg: WebDavMsg,
+) -> Result<(), AppError> {
+    match msg {
+        WebDavMsg::Finished {
+            request_id,
+            req,
+            result,
+        } => match result {
+            Ok(done) => {
+                let is_stale = matches!(
+                    *webdav_loading_request_id,
+                    Some(active_request_id) if active_request_id != request_id
+                );
+                if is_stale {
+                    return Ok(());
+                }
+
+                if *webdav_loading_request_id == Some(request_id) {
+                    *webdav_loading_request_id = None;
+                    if is_webdav_loading_overlay(app) {
+                        app.overlay = Overlay::None;
+                    }
+                }
+
+                match done {
+                    WebDavDone::ConnectionChecked => {
+                        update_webdav_last_error(None);
+                        app.push_toast(texts::tui_toast_webdav_connection_ok(), ToastKind::Success);
+                    }
+                    WebDavDone::Uploaded { decision, message } => {
+                        let msg = match decision {
+                            SyncDecision::Upload => texts::tui_toast_webdav_upload_ok().to_string(),
+                            _ => message,
+                        };
+                        app.push_toast(msg, ToastKind::Success);
+                    }
+                    WebDavDone::Downloaded { decision, message } => {
+                        let msg = match decision {
+                            SyncDecision::Download => {
+                                texts::tui_toast_webdav_download_ok().to_string()
+                            }
+                            _ => message,
+                        };
+                        app.push_toast(msg, ToastKind::Success);
+                    }
+                    WebDavDone::JianguoyunConfigured => {
+                        app.push_toast(
+                            texts::tui_toast_webdav_jianguoyun_configured(),
+                            ToastKind::Success,
+                        );
+                    }
+                }
+                *data = UiData::load(&app.app_type)?;
+            }
+            Err(err) => {
+                let is_stale = matches!(
+                    *webdav_loading_request_id,
+                    Some(active_request_id) if active_request_id != request_id
+                );
+                if is_stale {
+                    return Ok(());
+                }
+
+                if *webdav_loading_request_id == Some(request_id) {
+                    *webdav_loading_request_id = None;
+                    if is_webdav_loading_overlay(app) {
+                        app.overlay = Overlay::None;
+                    }
+                }
+                let error_detail = match &err {
+                    WebDavErr::Generic(e)
+                    | WebDavErr::QuickSetupSave(e)
+                    | WebDavErr::QuickSetupCheck(e) => e.clone(),
+                };
+                update_webdav_last_error(Some(error_detail));
+                let msg = match req {
+                    WebDavReqKind::CheckConnection => {
+                        let detail = match err {
+                            WebDavErr::Generic(e)
+                            | WebDavErr::QuickSetupSave(e)
+                            | WebDavErr::QuickSetupCheck(e) => e,
+                        };
+                        texts::tui_toast_webdav_action_failed(
+                            texts::tui_webdav_loading_title_check_connection(),
+                            &detail,
+                        )
+                    }
+                    WebDavReqKind::Upload => {
+                        let detail = match err {
+                            WebDavErr::Generic(e)
+                            | WebDavErr::QuickSetupSave(e)
+                            | WebDavErr::QuickSetupCheck(e) => e,
+                        };
+                        texts::tui_toast_webdav_action_failed(
+                            texts::tui_webdav_loading_title_upload(),
+                            &detail,
+                        )
+                    }
+                    WebDavReqKind::Download => {
+                        let detail = match err {
+                            WebDavErr::Generic(e)
+                            | WebDavErr::QuickSetupSave(e)
+                            | WebDavErr::QuickSetupCheck(e) => e,
+                        };
+                        texts::tui_toast_webdav_action_failed(
+                            texts::tui_webdav_loading_title_download(),
+                            &detail,
+                        )
+                    }
+                    WebDavReqKind::JianguoyunQuickSetup { .. } => match err {
+                        WebDavErr::QuickSetupCheck(e) => {
+                            texts::tui_toast_webdav_quick_setup_failed(&e)
+                        }
+                        WebDavErr::QuickSetupSave(e) | WebDavErr::Generic(e) => {
+                            texts::tui_toast_webdav_action_failed(
+                                texts::tui_webdav_loading_title_quick_setup(),
+                                &e,
+                            )
+                        }
+                    },
+                };
+                *data = UiData::load(&app.app_type)?;
+                app.push_toast(msg, ToastKind::Error);
+            }
+        },
+    }
+    Ok(())
+}
+
 fn handle_action(
     _terminal: &mut TuiTerminal,
     app: &mut App,
@@ -318,6 +543,9 @@ fn handle_action(
     speedtest_req_tx: Option<&mpsc::Sender<String>>,
     skills_req_tx: Option<&mpsc::Sender<SkillsReq>>,
     local_env_req_tx: Option<&mpsc::Sender<LocalEnvReq>>,
+    webdav_req_tx: Option<&mpsc::Sender<WebDavReq>>,
+    webdav_request_seq: &mut u64,
+    webdav_loading_request_id: &mut Option<u64>,
     action: Action,
 ) -> Result<(), AppError> {
     match action {
@@ -782,6 +1010,29 @@ fn handle_action(
                 });
                 Ok(())
             }
+            EditorSubmit::ConfigWebDavSettings => {
+                let edited = content.trim();
+                if edited.is_empty() {
+                    set_webdav_sync_settings(None)?;
+                    app.editor = None;
+                    app.push_toast(
+                        texts::tui_toast_webdav_settings_cleared(),
+                        ToastKind::Success,
+                    );
+                    *data = UiData::load(&app.app_type)?;
+                    return Ok(());
+                }
+
+                let cfg: WebDavSyncSettings = serde_json::from_str(edited).map_err(|e| {
+                    AppError::Message(texts::tui_toast_invalid_json(&e.to_string()))
+                })?;
+                set_webdav_sync_settings(Some(cfg))?;
+
+                app.editor = None;
+                app.push_toast(texts::tui_toast_webdav_settings_saved(), ToastKind::Success);
+                *data = UiData::load(&app.app_type)?;
+                Ok(())
+            }
         },
 
         Action::ProviderSwitch { id } => {
@@ -1088,6 +1339,127 @@ fn handle_action(
             *data = UiData::load(&app.app_type)?;
             Ok(())
         }
+        Action::ConfigWebDavCheckConnection => {
+            let Some(tx) = webdav_req_tx else {
+                app.push_toast(
+                    texts::tui_toast_webdav_worker_disabled(),
+                    ToastKind::Warning,
+                );
+                return Ok(());
+            };
+            *webdav_request_seq += 1;
+            let request_id = *webdav_request_seq;
+            *webdav_loading_request_id = Some(request_id);
+            app.overlay = Overlay::Loading {
+                title: texts::tui_webdav_loading_title_check_connection().to_string(),
+                message: texts::tui_webdav_loading_message().to_string(),
+            };
+            if let Err(err) = tx.send(WebDavReq {
+                request_id,
+                kind: WebDavReqKind::CheckConnection,
+            }) {
+                *webdav_loading_request_id = None;
+                app.overlay = Overlay::None;
+                app.push_toast(
+                    texts::tui_toast_webdav_request_failed(&err.to_string()),
+                    ToastKind::Error,
+                );
+            }
+            Ok(())
+        }
+        Action::ConfigWebDavUpload => {
+            let Some(tx) = webdav_req_tx else {
+                app.push_toast(
+                    texts::tui_toast_webdav_worker_disabled(),
+                    ToastKind::Warning,
+                );
+                return Ok(());
+            };
+            *webdav_request_seq += 1;
+            let request_id = *webdav_request_seq;
+            *webdav_loading_request_id = Some(request_id);
+            app.overlay = Overlay::Loading {
+                title: texts::tui_webdav_loading_title_upload().to_string(),
+                message: texts::tui_webdav_loading_message().to_string(),
+            };
+            if let Err(err) = tx.send(WebDavReq {
+                request_id,
+                kind: WebDavReqKind::Upload,
+            }) {
+                *webdav_loading_request_id = None;
+                app.overlay = Overlay::None;
+                app.push_toast(
+                    texts::tui_toast_webdav_request_failed(&err.to_string()),
+                    ToastKind::Error,
+                );
+            }
+            Ok(())
+        }
+        Action::ConfigWebDavDownload => {
+            let Some(tx) = webdav_req_tx else {
+                app.push_toast(
+                    texts::tui_toast_webdav_worker_disabled(),
+                    ToastKind::Warning,
+                );
+                return Ok(());
+            };
+            *webdav_request_seq += 1;
+            let request_id = *webdav_request_seq;
+            *webdav_loading_request_id = Some(request_id);
+            app.overlay = Overlay::Loading {
+                title: texts::tui_webdav_loading_title_download().to_string(),
+                message: texts::tui_webdav_loading_message().to_string(),
+            };
+            if let Err(err) = tx.send(WebDavReq {
+                request_id,
+                kind: WebDavReqKind::Download,
+            }) {
+                *webdav_loading_request_id = None;
+                app.overlay = Overlay::None;
+                app.push_toast(
+                    texts::tui_toast_webdav_request_failed(&err.to_string()),
+                    ToastKind::Error,
+                );
+            }
+            Ok(())
+        }
+        Action::ConfigWebDavReset => {
+            set_webdav_sync_settings(None)?;
+            app.push_toast(
+                texts::tui_toast_webdav_settings_cleared(),
+                ToastKind::Success,
+            );
+            *data = UiData::load(&app.app_type)?;
+            Ok(())
+        }
+        Action::ConfigWebDavJianguoyunQuickSetup { username, password } => {
+            let Some(tx) = webdav_req_tx else {
+                app.push_toast(
+                    texts::tui_toast_webdav_worker_disabled(),
+                    ToastKind::Warning,
+                );
+                return Ok(());
+            };
+            *webdav_request_seq += 1;
+            let request_id = *webdav_request_seq;
+            *webdav_loading_request_id = Some(request_id);
+            app.overlay = Overlay::Loading {
+                title: texts::tui_webdav_loading_title_quick_setup().to_string(),
+                message: texts::tui_webdav_loading_message().to_string(),
+            };
+            if let Err(err) = tx.send(WebDavReq {
+                request_id,
+                kind: WebDavReqKind::JianguoyunQuickSetup { username, password },
+            }) {
+                *webdav_loading_request_id = None;
+                app.overlay = Overlay::None;
+                app.push_toast(
+                    texts::tui_toast_webdav_request_failed(&err.to_string()),
+                    ToastKind::Error,
+                );
+            }
+            Ok(())
+        }
         Action::ConfigReset => {
             let config_dir = crate::config::get_app_config_dir();
             let db_path = config_dir.join("cc-switch.db");
@@ -1129,6 +1501,40 @@ fn handle_action(
     }
 }
 
+fn apply_webdav_jianguoyun_quick_setup<FSave, FCheck>(
+    username: &str,
+    password: &str,
+    save_settings: FSave,
+    check_connection: FCheck,
+) -> Result<(), AppError>
+where
+    FSave: FnOnce(WebDavSyncSettings) -> Result<(), AppError>,
+    FCheck: FnOnce() -> Result<(), AppError>,
+{
+    let cfg = webdav_jianguoyun_preset(username, password);
+    save_settings(cfg)?;
+    check_connection()?;
+    Ok(())
+}
+
+fn update_webdav_last_error_with<FGet, FSet>(last_error: Option<String>, get: FGet, set: FSet)
+where
+    FGet: FnOnce() -> Option<WebDavSyncSettings>,
+    FSet: FnOnce(WebDavSyncSettings) -> Result<(), AppError>,
+{
+    let Some(mut cfg) = get() else {
+        return;
+    };
+    cfg.status.last_error = last_error;
+    let _ = set(cfg);
+}
+
+fn update_webdav_last_error(last_error: Option<String>) {
+    update_webdav_last_error_with(last_error, get_webdav_sync_settings, |cfg| {
+        set_webdav_sync_settings(Some(cfg))
+    });
+}
+
 fn refresh_common_snippet_overlay(app: &mut App, data: &UiData) {
     let Overlay::CommonSnippetView(view) = &mut app.overlay else {
         return;
@@ -1143,6 +1549,73 @@ fn refresh_common_snippet_overlay(app: &mut App, data: &UiData) {
     view.title = texts::tui_common_snippet_title(app.app_type.as_str());
     view.lines = snippet.lines().map(|s| s.to_string()).collect();
     view.scroll = 0;
+}
+
+fn start_webdav_system() -> Result<WebDavSystem, AppError> {
+    let (result_tx, result_rx) = mpsc::channel::<WebDavMsg>();
+    let (req_tx, req_rx) = mpsc::channel::<WebDavReq>();
+
+    let handle = std::thread::Builder::new()
+        .name("cc-switch-webdav".to_string())
+        .spawn(move || webdav_worker_loop(req_rx, result_tx))
+        .map_err(|e| AppError::IoContext {
+            context: "failed to spawn webdav worker thread".to_string(),
+            source: e,
+        })?;
+
+    Ok(WebDavSystem {
+        req_tx,
+        result_rx,
+        _handle: handle,
+    })
+}
+
+fn drain_latest_webdav_req(mut req: WebDavReq, rx: &mpsc::Receiver<WebDavReq>) -> WebDavReq {
+    for next in rx.try_iter() {
+        req = next;
+    }
+    req
+}
+
+fn webdav_worker_loop(rx: mpsc::Receiver<WebDavReq>, tx: mpsc::Sender<WebDavMsg>) {
+    while let Ok(req) = rx.recv() {
+        let req = drain_latest_webdav_req(req, &rx);
+        let request_id = req.request_id;
+        let req_for_msg = req.kind.clone();
+        let result = match req.kind {
+            WebDavReqKind::CheckConnection => WebDavSyncService::check_connection()
+                .map(|_| WebDavDone::ConnectionChecked)
+                .map_err(|e| WebDavErr::Generic(e.to_string())),
+            WebDavReqKind::Upload => WebDavSyncService::upload()
+                .map(|summary| WebDavDone::Uploaded {
+                    decision: summary.decision,
+                    message: summary.message,
+                })
+                .map_err(|e| WebDavErr::Generic(e.to_string())),
+            WebDavReqKind::Download => WebDavSyncService::download()
+                .map(|summary| WebDavDone::Downloaded {
+                    decision: summary.decision,
+                    message: summary.message,
+                })
+                .map_err(|e| WebDavErr::Generic(e.to_string())),
+            WebDavReqKind::JianguoyunQuickSetup { username, password } => {
+                let cfg = webdav_jianguoyun_preset(&username, &password);
+                if let Err(err) = set_webdav_sync_settings(Some(cfg)) {
+                    Err(WebDavErr::QuickSetupSave(err.to_string()))
+                } else if let Err(err) = WebDavSyncService::check_connection() {
+                    Err(WebDavErr::QuickSetupCheck(err.to_string()))
+                } else {
+                    Ok(WebDavDone::JianguoyunConfigured)
+                }
+            }
+        };
+
+        let _ = tx.send(WebDavMsg::Finished {
+            request_id,
+            req: req_for_msg,
+            result,
+        });
+    }
 }
 
 fn start_speedtest_system() -> Result<SpeedtestSystem, AppError> {
@@ -1373,6 +1846,10 @@ fn parse_repo_spec(raw: &str) -> Result<SkillRepo, AppError> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+
+    use crate::AppError;
+
     #[test]
     fn command_lookup_name_extracts_first_token() {
         assert_eq!(super::command_lookup_name("node --version"), Some("node"));
@@ -1383,5 +1860,119 @@ mod tests {
     fn command_lookup_name_rejects_empty_or_whitespace() {
         assert_eq!(super::command_lookup_name(""), None);
         assert_eq!(super::command_lookup_name("   "), None);
+    }
+
+    #[test]
+    fn quick_setup_helper_saves_preset_and_runs_connection_check() {
+        let mut captured = None;
+        let mut checked = false;
+
+        super::apply_webdav_jianguoyun_quick_setup(
+            " demo@nutstore.com ",
+            " app-password ",
+            |cfg| {
+                captured = Some(cfg);
+                Ok(())
+            },
+            || {
+                checked = true;
+                Ok(())
+            },
+        )
+        .expect("quick setup helper should succeed");
+
+        let saved = captured.expect("settings should be saved");
+        assert!(saved.enabled);
+        assert_eq!(saved.base_url, "https://dav.jianguoyun.com/dav");
+        assert_eq!(saved.remote_root, "cc-switch-sync");
+        assert_eq!(saved.profile, "default");
+        assert_eq!(saved.username, "demo@nutstore.com");
+        assert_eq!(saved.password, "app-password");
+        assert!(checked, "connection check should be called");
+    }
+
+    #[test]
+    fn quick_setup_helper_stops_when_save_fails() {
+        let mut checked = false;
+        let err = super::apply_webdav_jianguoyun_quick_setup(
+            "u",
+            "p",
+            |_cfg| Err(AppError::Message("save failed".to_string())),
+            || {
+                checked = true;
+                Ok(())
+            },
+        )
+        .expect_err("save failure should be returned");
+
+        assert!(err.to_string().contains("save failed"));
+        assert!(!checked, "connection check should not run when save fails");
+    }
+
+    #[test]
+    fn drain_latest_webdav_req_prefers_last_enqueued_request() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(super::WebDavReq {
+            request_id: 1,
+            kind: super::WebDavReqKind::CheckConnection,
+        })
+        .expect("send check request");
+        tx.send(super::WebDavReq {
+            request_id: 2,
+            kind: super::WebDavReqKind::Upload,
+        })
+        .expect("send upload request");
+        tx.send(super::WebDavReq {
+            request_id: 3,
+            kind: super::WebDavReqKind::JianguoyunQuickSetup {
+                username: "u@example.com".to_string(),
+                password: "p".to_string(),
+            },
+        })
+        .expect("send quick setup request");
+
+        let first = rx.recv().expect("receive first request");
+        let latest = super::drain_latest_webdav_req(first, &rx);
+        assert!(matches!(
+            latest,
+            super::WebDavReq {
+                request_id: 3,
+                kind: super::WebDavReqKind::JianguoyunQuickSetup { username, password }
+            }
+                if username == "u@example.com" && password == "p"
+        ));
+    }
+
+    #[test]
+    fn update_webdav_last_error_with_updates_status_when_present() {
+        let mut captured = None;
+        super::update_webdav_last_error_with(
+            Some("network timeout".to_string()),
+            || Some(crate::settings::WebDavSyncSettings::default()),
+            |cfg| {
+                captured = Some(cfg);
+                Ok(())
+            },
+        );
+
+        let saved = captured.expect("expected settings to be saved");
+        assert_eq!(saved.status.last_error.as_deref(), Some("network timeout"));
+    }
+
+    #[test]
+    fn update_webdav_last_error_with_skips_when_settings_absent() {
+        let mut saved = false;
+        super::update_webdav_last_error_with(
+            Some("network timeout".to_string()),
+            || None,
+            |_cfg| {
+                saved = true;
+                Ok(())
+            },
+        );
+        assert!(
+            !saved,
+            "set callback should not run when webdav settings are missing"
+        );
     }
 }

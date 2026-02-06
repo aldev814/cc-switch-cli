@@ -43,9 +43,11 @@ pub use mcp::{
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, SkillService,
-    SpeedtestService,
+    SpeedtestService, SyncDecision, WebDavSyncService, WebDavSyncSummary,
 };
 pub use settings::{
-    get_skip_claude_onboarding, set_skip_claude_onboarding, update_settings, AppSettings,
+    get_skip_claude_onboarding, get_webdav_sync_settings, set_skip_claude_onboarding,
+    set_webdav_sync_settings, update_settings, webdav_jianguoyun_preset, AppSettings,
+    WebDavSyncSettings, WebDavSyncStatus,
 };
 pub use store::AppState;
