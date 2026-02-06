@@ -182,7 +182,7 @@ struct SponsorProviderPreset {
 const SPONSOR_PROVIDER_PRESETS: [SponsorProviderPreset; 1] = [SponsorProviderPreset {
     id: "packycode",
     provider_name: "PackyCode",
-    chip_label: "★ PackyCode",
+    chip_label: "* PackyCode",
     website_url: "https://www.packyapi.com",
     register_url: "https://www.packyapi.com/register?aff=cc-switch-cli",
     promo_code: "cc-switch-cli",
@@ -1158,6 +1158,17 @@ mod tests {
             .position(|preset| preset.id == "packycode")
             .expect("PackyCode sponsor preset should exist");
         builtin_len + sponsor_idx
+    }
+
+    #[test]
+    fn provider_add_form_template_labels_use_ascii_prefix_for_packycode() {
+        let form = ProviderAddFormState::new(AppType::Claude);
+        let labels = form.template_labels();
+
+        assert!(
+            labels.contains(&"* PackyCode"),
+            "expected PackyCode chip label to use ASCII prefix for alignment stability"
+        );
     }
 
     #[test]
