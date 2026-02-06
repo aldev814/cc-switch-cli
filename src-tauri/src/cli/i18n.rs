@@ -5160,10 +5160,19 @@ pub mod texts {
     }
 
     pub fn common_config_snippet_editor_prompt(app: &str) -> String {
+        let is_codex = app == "codex";
         if is_chinese() {
-            format!("编辑 {app} 的通用配置片段（JSON 对象，留空则清除）：")
+            if is_codex {
+                format!("编辑 {app} 的通用配置片段（TOML，留空则清除）：")
+            } else {
+                format!("编辑 {app} 的通用配置片段（JSON 对象，留空则清除）：")
+            }
         } else {
-            format!("Edit common config snippet for {app} (JSON object; empty to clear):")
+            if is_codex {
+                format!("Edit common config snippet for {app} (TOML; empty to clear):")
+            } else {
+                format!("Edit common config snippet for {app} (JSON object; empty to clear):")
+            }
         }
     }
 
