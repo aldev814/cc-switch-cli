@@ -14,6 +14,8 @@ use super::form::{
 };
 use super::route::{NavItem, Route};
 
+const PROVIDER_NOTES_MAX_CHARS: usize = 120;
+
 #[derive(Debug, Clone)]
 pub struct FilterState {
     pub active: bool,
@@ -1938,6 +1940,17 @@ impl App {
                             if c.is_control() {
                                 return Action::None;
                             }
+                            if selected == ProviderAddField::Notes {
+                                let can_insert = provider
+                                    .input(selected)
+                                    .map(|input| {
+                                        input.value.chars().count() < PROVIDER_NOTES_MAX_CHARS
+                                    })
+                                    .unwrap_or(true);
+                                if !can_insert {
+                                    return Action::None;
+                                }
+                            }
                             let changed = provider
                                 .input_mut(selected)
                                 .map(|input| input.insert_char(c))
@@ -2771,6 +2784,39 @@ mod tests {
         assert_eq!(app.route, Route::Main);
         app.on_key(key(KeyCode::Char('q')), &data());
         assert!(matches!(app.overlay, Overlay::Confirm(_)));
+    }
+
+    #[test]
+    fn provider_add_form_notes_is_length_limited() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.open_provider_add_form();
+
+        let notes_idx = match app.form.as_ref() {
+            Some(FormState::ProviderAdd(form)) => form
+                .fields()
+                .iter()
+                .position(|f| *f == ProviderAddField::Notes)
+                .expect("Notes field should exist"),
+            _ => panic!("provider form should be open"),
+        };
+
+        if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            form.focus = FormFocus::Fields;
+            form.field_idx = notes_idx;
+            form.editing = false;
+        }
+
+        // Enter edit mode for Notes.
+        app.on_key(key(KeyCode::Enter), &data());
+        for _ in 0..(PROVIDER_NOTES_MAX_CHARS + 10) {
+            app.on_key(key(KeyCode::Char('a')), &data());
+        }
+
+        let notes_len = match app.form.as_ref() {
+            Some(FormState::ProviderAdd(form)) => form.notes.value.chars().count(),
+            _ => 0,
+        };
+        assert_eq!(notes_len, PROVIDER_NOTES_MAX_CHARS);
     }
 
     #[test]
