@@ -857,6 +857,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_label_claude_model_config() -> &'static str {
+        if is_chinese() {
+            "Claude 模型配置"
+        } else {
+            "Claude Model Config"
+        }
+    }
+
     pub fn tui_label_command() -> &'static str {
         if is_chinese() {
             "命令"
@@ -946,6 +954,70 @@ pub mod texts {
             "编辑中"
         } else {
             "Editing"
+        }
+    }
+
+    pub fn tui_claude_model_config_popup_title() -> &'static str {
+        if is_chinese() {
+            "Claude 模型配置"
+        } else {
+            "Claude Model Configuration"
+        }
+    }
+
+    pub fn tui_claude_model_main_label() -> &'static str {
+        if is_chinese() {
+            "主模型"
+        } else {
+            "Main Model"
+        }
+    }
+
+    pub fn tui_claude_reasoning_model_label() -> &'static str {
+        if is_chinese() {
+            "推理模型 (Thinking)"
+        } else {
+            "Reasoning Model (Thinking)"
+        }
+    }
+
+    pub fn tui_claude_default_haiku_model_label() -> &'static str {
+        if is_chinese() {
+            "默认 Haiku 模型"
+        } else {
+            "Default Haiku Model"
+        }
+    }
+
+    pub fn tui_claude_default_sonnet_model_label() -> &'static str {
+        if is_chinese() {
+            "默认 Sonnet 模型"
+        } else {
+            "Default Sonnet Model"
+        }
+    }
+
+    pub fn tui_claude_default_opus_model_label() -> &'static str {
+        if is_chinese() {
+            "默认 Opus 模型"
+        } else {
+            "Default Opus Model"
+        }
+    }
+
+    pub fn tui_claude_model_config_summary(configured_count: usize) -> String {
+        if is_chinese() {
+            format!("已配置 {configured_count}/5")
+        } else {
+            format!("Configured {configured_count}/5")
+        }
+    }
+
+    pub fn tui_claude_model_config_open_hint() -> &'static str {
+        if is_chinese() {
+            "按 Enter 配置 Claude 模型"
+        } else {
+            "Press Enter to configure Claude models"
         }
     }
 

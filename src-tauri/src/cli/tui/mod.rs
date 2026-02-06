@@ -24,6 +24,7 @@ use crate::services::{
 
 use app::{Action, App, EditorSubmit, Overlay, TextViewState, ToastKind};
 use data::{load_state, UiData};
+use form::FormState;
 use terminal::{PanicRestoreHookGuard, TuiTerminal};
 
 fn command_lookup_name(raw: &str) -> Option<&str> {
@@ -520,6 +521,24 @@ fn handle_action(
                 app.editor = None;
                 app.push_toast(texts::tui_toast_prompt_edit_finished(), ToastKind::Success);
                 *data = UiData::load(&app.app_type)?;
+                Ok(())
+            }
+            EditorSubmit::ProviderFormApplyJson => {
+                let provider: Provider = match serde_json::from_str(&content) {
+                    Ok(provider) => provider,
+                    Err(e) => {
+                        app.push_toast(
+                            texts::tui_toast_invalid_json(&e.to_string()),
+                            ToastKind::Error,
+                        );
+                        return Ok(());
+                    }
+                };
+
+                if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+                    form.apply_provider_json_to_fields(&provider);
+                }
+                app.editor = None;
                 Ok(())
             }
             EditorSubmit::ProviderAdd => {

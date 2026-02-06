@@ -135,6 +135,7 @@ pub enum ProviderAddField {
     Notes,
     ClaudeBaseUrl,
     ClaudeApiKey,
+    ClaudeModelConfig,
     CodexBaseUrl,
     CodexModel,
     CodexWireApi,
@@ -260,10 +261,16 @@ pub struct ProviderAddFormState {
     pub notes: TextInput,
     pub include_common_config: bool,
     pub json_scroll: usize,
+    claude_model_config_touched: bool,
 
     // Claude
     pub claude_api_key: TextInput,
     pub claude_base_url: TextInput,
+    pub claude_model: TextInput,
+    pub claude_reasoning_model: TextInput,
+    pub claude_haiku_model: TextInput,
+    pub claude_sonnet_model: TextInput,
+    pub claude_opus_model: TextInput,
 
     // Codex
     pub codex_base_url: TextInput,
@@ -309,9 +316,15 @@ impl ProviderAddFormState {
             notes: TextInput::new(""),
             include_common_config: true,
             json_scroll: 0,
+            claude_model_config_touched: false,
 
             claude_api_key: TextInput::new(""),
             claude_base_url: TextInput::new(""),
+            claude_model: TextInput::new(""),
+            claude_reasoning_model: TextInput::new(""),
+            claude_haiku_model: TextInput::new(""),
+            claude_sonnet_model: TextInput::new(""),
+            claude_opus_model: TextInput::new(""),
 
             codex_base_url: TextInput::new(codex_defaults.0),
             codex_model: TextInput::new(codex_defaults.1),
@@ -362,6 +375,45 @@ impl ProviderAddFormState {
                     }
                     if let Some(url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
                         form.claude_base_url.set(url);
+                    }
+                    if let Some(model) = env.get("ANTHROPIC_MODEL").and_then(|v| v.as_str()) {
+                        form.claude_model.set(model);
+                    }
+                    if let Some(reasoning) = env
+                        .get("ANTHROPIC_REASONING_MODEL")
+                        .and_then(|v| v.as_str())
+                    {
+                        form.claude_reasoning_model.set(reasoning);
+                    }
+
+                    let model = env.get("ANTHROPIC_MODEL").and_then(|v| v.as_str());
+                    let small_fast = env
+                        .get("ANTHROPIC_SMALL_FAST_MODEL")
+                        .and_then(|v| v.as_str());
+
+                    if let Some(haiku) = env
+                        .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                        .and_then(|v| v.as_str())
+                        .or(small_fast)
+                        .or(model)
+                    {
+                        form.claude_haiku_model.set(haiku);
+                    }
+                    if let Some(sonnet) = env
+                        .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                        .and_then(|v| v.as_str())
+                        .or(model)
+                        .or(small_fast)
+                    {
+                        form.claude_sonnet_model.set(sonnet);
+                    }
+                    if let Some(opus) = env
+                        .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                        .and_then(|v| v.as_str())
+                        .or(model)
+                        .or(small_fast)
+                    {
+                        form.claude_opus_model.set(opus);
                     }
                 }
             }
@@ -468,6 +520,7 @@ impl ProviderAddFormState {
             AppType::Claude => {
                 fields.push(ProviderAddField::ClaudeBaseUrl);
                 fields.push(ProviderAddField::ClaudeApiKey);
+                fields.push(ProviderAddField::ClaudeModelConfig);
             }
             AppType::Codex => {
                 fields.push(ProviderAddField::CodexBaseUrl);
@@ -510,6 +563,7 @@ impl ProviderAddFormState {
             ProviderAddField::GeminiModel => Some(&self.gemini_model),
             ProviderAddField::CodexWireApi
             | ProviderAddField::CodexRequiresOpenaiAuth
+            | ProviderAddField::ClaudeModelConfig
             | ProviderAddField::GeminiAuthType
             | ProviderAddField::IncludeCommonConfig => None,
         }
@@ -532,9 +586,49 @@ impl ProviderAddFormState {
             ProviderAddField::GeminiModel => Some(&mut self.gemini_model),
             ProviderAddField::CodexWireApi
             | ProviderAddField::CodexRequiresOpenaiAuth
+            | ProviderAddField::ClaudeModelConfig
             | ProviderAddField::GeminiAuthType
             | ProviderAddField::IncludeCommonConfig => None,
         }
+    }
+
+    pub fn claude_model_input(&self, index: usize) -> Option<&TextInput> {
+        match index {
+            0 => Some(&self.claude_model),
+            1 => Some(&self.claude_reasoning_model),
+            2 => Some(&self.claude_haiku_model),
+            3 => Some(&self.claude_sonnet_model),
+            4 => Some(&self.claude_opus_model),
+            _ => None,
+        }
+    }
+
+    pub fn claude_model_input_mut(&mut self, index: usize) -> Option<&mut TextInput> {
+        match index {
+            0 => Some(&mut self.claude_model),
+            1 => Some(&mut self.claude_reasoning_model),
+            2 => Some(&mut self.claude_haiku_model),
+            3 => Some(&mut self.claude_sonnet_model),
+            4 => Some(&mut self.claude_opus_model),
+            _ => None,
+        }
+    }
+
+    pub fn claude_model_configured_count(&self) -> usize {
+        [
+            &self.claude_model,
+            &self.claude_reasoning_model,
+            &self.claude_haiku_model,
+            &self.claude_sonnet_model,
+            &self.claude_opus_model,
+        ]
+        .into_iter()
+        .filter(|input| !input.is_blank())
+        .count()
+    }
+
+    pub fn mark_claude_model_config_touched(&mut self) {
+        self.claude_model_config_touched = true;
     }
 
     pub fn apply_template(&mut self, idx: usize, existing_ids: &[String]) {
@@ -565,8 +659,14 @@ impl ProviderAddFormState {
                     self.website_url = defaults.website_url;
                     self.notes = defaults.notes;
                     self.json_scroll = defaults.json_scroll;
+                    self.claude_model_config_touched = defaults.claude_model_config_touched;
                     self.claude_api_key = defaults.claude_api_key;
                     self.claude_base_url = defaults.claude_base_url;
+                    self.claude_model = defaults.claude_model;
+                    self.claude_reasoning_model = defaults.claude_reasoning_model;
+                    self.claude_haiku_model = defaults.claude_haiku_model;
+                    self.claude_sonnet_model = defaults.claude_sonnet_model;
+                    self.claude_opus_model = defaults.claude_opus_model;
                     self.codex_base_url = defaults.codex_base_url;
                     self.codex_model = defaults.codex_model;
                     self.codex_wire_api = defaults.codex_wire_api;
@@ -696,6 +796,30 @@ impl ProviderAddFormState {
                     .expect("env must be a JSON object");
                 set_or_remove_trimmed(env_obj, "ANTHROPIC_AUTH_TOKEN", &self.claude_api_key.value);
                 set_or_remove_trimmed(env_obj, "ANTHROPIC_BASE_URL", &self.claude_base_url.value);
+                if self.claude_model_config_touched {
+                    set_or_remove_trimmed(env_obj, "ANTHROPIC_MODEL", &self.claude_model.value);
+                    set_or_remove_trimmed(
+                        env_obj,
+                        "ANTHROPIC_REASONING_MODEL",
+                        &self.claude_reasoning_model.value,
+                    );
+                    set_or_remove_trimmed(
+                        env_obj,
+                        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                        &self.claude_haiku_model.value,
+                    );
+                    set_or_remove_trimmed(
+                        env_obj,
+                        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                        &self.claude_sonnet_model.value,
+                    );
+                    set_or_remove_trimmed(
+                        env_obj,
+                        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                        &self.claude_opus_model.value,
+                    );
+                    env_obj.remove("ANTHROPIC_SMALL_FAST_MODEL");
+                }
             }
             AppType::Codex => {
                 let original = settings_obj
@@ -773,6 +897,104 @@ impl ProviderAddFormState {
         }
 
         Value::Object(provider_obj)
+    }
+
+    pub fn to_provider_json_value_with_common_config(
+        &self,
+        common_snippet: &str,
+    ) -> Result<Value, String> {
+        let mut provider_value = self.to_provider_json_value();
+        if !self.include_common_config {
+            return Ok(provider_value);
+        }
+
+        let snippet = common_snippet.trim();
+        if snippet.is_empty() {
+            return Ok(provider_value);
+        }
+
+        let Some(settings_value) = provider_value
+            .as_object_mut()
+            .and_then(|obj| obj.get_mut("settingsConfig"))
+        else {
+            return Ok(provider_value);
+        };
+
+        match self.app_type {
+            AppType::Claude | AppType::Gemini => {
+                let mut common: Value = serde_json::from_str(snippet).map_err(|e| {
+                    crate::cli::i18n::texts::common_config_snippet_invalid_json(&e.to_string())
+                })?;
+                if !common.is_object() {
+                    return Err(
+                        crate::cli::i18n::texts::common_config_snippet_not_object().to_string()
+                    );
+                }
+
+                merge_json_values(&mut common, settings_value);
+                *settings_value = common;
+            }
+            AppType::Codex => {
+                if !settings_value.is_object() {
+                    *settings_value = json!({});
+                }
+                let settings_obj = settings_value
+                    .as_object_mut()
+                    .expect("settingsConfig must be a JSON object");
+                let base_config = settings_obj
+                    .get("config")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default();
+                let merged_config = merge_codex_common_config_snippet(base_config, snippet)?;
+                settings_obj.insert("config".to_string(), Value::String(merged_config));
+            }
+        }
+
+        Ok(provider_value)
+    }
+
+    pub fn apply_provider_json_to_fields(&mut self, provider: &Provider) {
+        let previous_mode = self.mode.clone();
+        let previous_focus = self.focus;
+        let previous_template_idx = self.template_idx;
+        let previous_field_idx = self.field_idx;
+        let previous_json_scroll = self.json_scroll;
+        let previous_include_common_config = self.include_common_config;
+        let previous_extra = self.extra.clone();
+
+        let mut next = Self::from_provider(self.app_type.clone(), provider);
+        let overlay = serde_json::to_value(provider).unwrap_or_else(|_| json!({}));
+        let mut merged_extra = previous_extra;
+        merge_json_values(&mut merged_extra, &overlay);
+        next.extra = merged_extra;
+
+        if provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.apply_common_config)
+            .is_none()
+        {
+            next.include_common_config = previous_include_common_config;
+        }
+
+        next.mode = previous_mode.clone();
+        next.focus = previous_focus;
+        next.template_idx = previous_template_idx;
+        next.json_scroll = previous_json_scroll;
+        next.editing = false;
+        let fields_len = next.fields().len();
+        next.field_idx = if fields_len == 0 {
+            0
+        } else {
+            previous_field_idx.min(fields_len - 1)
+        };
+
+        if let FormMode::Edit { id } = previous_mode {
+            next.id.set(id);
+            next.id_is_manual = true;
+        }
+
+        *self = next;
     }
 }
 
@@ -1107,6 +1329,67 @@ fn escape_toml_string(value: &str) -> String {
     value.replace('"', "\\\"")
 }
 
+fn merge_json_values(base: &mut Value, overlay: &Value) {
+    match (base, overlay) {
+        (Value::Object(base_obj), Value::Object(overlay_obj)) => {
+            for (overlay_key, overlay_value) in overlay_obj {
+                match base_obj.get_mut(overlay_key) {
+                    Some(base_value) => merge_json_values(base_value, overlay_value),
+                    None => {
+                        base_obj.insert(overlay_key.clone(), overlay_value.clone());
+                    }
+                }
+            }
+        }
+        (base_value, overlay_value) => {
+            *base_value = overlay_value.clone();
+        }
+    }
+}
+
+fn merge_codex_common_config_snippet(
+    config_toml: &str,
+    common_snippet: &str,
+) -> Result<String, String> {
+    use toml_edit::DocumentMut;
+
+    let common_trimmed = common_snippet.trim();
+    if common_trimmed.is_empty() {
+        return Ok(config_toml.to_string());
+    }
+
+    let mut common_doc: DocumentMut = common_trimmed
+        .parse()
+        .map_err(|e| format!("Invalid common Codex TOML: {e}"))?;
+
+    let config_trimmed = config_toml.trim();
+    let config_doc: DocumentMut = if config_trimmed.is_empty() {
+        DocumentMut::default()
+    } else {
+        config_trimmed
+            .parse()
+            .map_err(|e| format!("Invalid provider Codex TOML: {e}"))?
+    };
+
+    merge_toml_tables(common_doc.as_table_mut(), config_doc.as_table());
+    Ok(common_doc.to_string())
+}
+
+fn merge_toml_tables(dst: &mut toml_edit::Table, src: &toml_edit::Table) {
+    for (key, src_item) in src.iter() {
+        match (dst.get_mut(key), src_item) {
+            (Some(dst_item), toml_edit::Item::Table(src_table)) if dst_item.is_table() => {
+                if let Some(dst_table) = dst_item.as_table_mut() {
+                    merge_toml_tables(dst_table, src_table);
+                }
+            }
+            _ => {
+                dst.insert(key, src_item.clone());
+            }
+        }
+    }
+}
+
 fn should_hide_provider_field(key: &str) -> bool {
     matches!(
         key,
@@ -1195,6 +1478,24 @@ mod tests {
     }
 
     #[test]
+    fn provider_add_form_claude_fields_include_model_config_entry() {
+        let form = ProviderAddFormState::new(AppType::Claude);
+        let fields = form.fields();
+        let api_key_idx = fields
+            .iter()
+            .position(|f| *f == ProviderAddField::ClaudeApiKey)
+            .expect("ClaudeApiKey field should exist");
+        let model_cfg_idx = fields
+            .iter()
+            .position(|f| *f == ProviderAddField::ClaudeModelConfig)
+            .expect("ClaudeModelConfig field should exist");
+        assert!(
+            model_cfg_idx > api_key_idx,
+            "ClaudeModelConfig should appear after ClaudeApiKey"
+        );
+    }
+
+    #[test]
     fn provider_add_form_packycode_template_claude_sets_partner_meta_and_base_url() {
         let mut form = ProviderAddFormState::new(AppType::Claude);
         let existing_ids = Vec::<String>::new();
@@ -1270,6 +1571,162 @@ mod tests {
         assert_eq!(
             provider["settingsConfig"]["env"]["ANTHROPIC_BASE_URL"],
             "https://claude.example"
+        );
+    }
+
+    #[test]
+    fn provider_add_form_claude_from_provider_backfills_models_with_legacy_fallback() {
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "Provider One".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "model-main",
+                    "ANTHROPIC_REASONING_MODEL": "model-reasoning",
+                    "ANTHROPIC_SMALL_FAST_MODEL": "model-small-fast",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "model-sonnet-explicit",
+                }
+            }),
+            None,
+        );
+
+        let form = ProviderAddFormState::from_provider(AppType::Claude, &provider);
+        assert_eq!(form.claude_model.value, "model-main");
+        assert_eq!(form.claude_reasoning_model.value, "model-reasoning");
+        assert_eq!(form.claude_haiku_model.value, "model-small-fast");
+        assert_eq!(form.claude_sonnet_model.value, "model-sonnet-explicit");
+        assert_eq!(form.claude_opus_model.value, "model-main");
+    }
+
+    #[test]
+    fn provider_add_form_claude_writes_new_model_keys_and_removes_small_fast() {
+        let mut form = ProviderAddFormState::new(AppType::Claude);
+        form.id.set("p1");
+        form.name.set("Provider One");
+        form.extra = json!({
+            "settingsConfig": {
+                "env": {
+                    "ANTHROPIC_SMALL_FAST_MODEL": "legacy-small",
+                    "FOO": "bar"
+                }
+            }
+        });
+        form.claude_model.set("model-main");
+        form.claude_reasoning_model.set("model-reasoning");
+        form.claude_haiku_model.set("model-haiku");
+        form.claude_sonnet_model.set("model-sonnet");
+        form.claude_opus_model.set("model-opus");
+        form.mark_claude_model_config_touched();
+
+        let provider = form.to_provider_json_value();
+        let env = provider["settingsConfig"]["env"]
+            .as_object()
+            .expect("settingsConfig.env should be object");
+        assert_eq!(
+            env.get("ANTHROPIC_MODEL").and_then(|v| v.as_str()),
+            Some("model-main")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_REASONING_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("model-reasoning")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("model-haiku")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("model-sonnet")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("model-opus")
+        );
+        assert!(env.get("ANTHROPIC_SMALL_FAST_MODEL").is_none());
+        assert_eq!(env.get("FOO").and_then(|v| v.as_str()), Some("bar"));
+    }
+
+    #[test]
+    fn provider_add_form_claude_empty_model_fields_remove_env_keys() {
+        let mut form = ProviderAddFormState::new(AppType::Claude);
+        form.id.set("p1");
+        form.name.set("Provider One");
+        form.extra = json!({
+            "settingsConfig": {
+                "env": {
+                    "ANTHROPIC_MODEL": "old-main",
+                    "ANTHROPIC_REASONING_MODEL": "old-reasoning",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "old-haiku",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "old-sonnet",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "old-opus",
+                    "ANTHROPIC_SMALL_FAST_MODEL": "old-small-fast",
+                }
+            }
+        });
+        form.mark_claude_model_config_touched();
+
+        let provider = form.to_provider_json_value();
+        let env = provider["settingsConfig"]["env"]
+            .as_object()
+            .expect("settingsConfig.env should be object");
+        assert!(env.get("ANTHROPIC_MODEL").is_none());
+        assert!(env.get("ANTHROPIC_REASONING_MODEL").is_none());
+        assert!(env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL").is_none());
+        assert!(env.get("ANTHROPIC_DEFAULT_SONNET_MODEL").is_none());
+        assert!(env.get("ANTHROPIC_DEFAULT_OPUS_MODEL").is_none());
+        assert!(env.get("ANTHROPIC_SMALL_FAST_MODEL").is_none());
+    }
+
+    #[test]
+    fn provider_add_form_claude_untouched_model_popup_keeps_model_keys() {
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "Provider One".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-old",
+                    "ANTHROPIC_BASE_URL": "https://claude.example",
+                    "ANTHROPIC_MODEL": "model-main",
+                    "ANTHROPIC_SMALL_FAST_MODEL": "model-small-fast",
+                }
+            }),
+            None,
+        );
+
+        let mut form = ProviderAddFormState::from_provider(AppType::Claude, &provider);
+        form.name.set("Provider One Updated");
+
+        let out = form.to_provider_json_value();
+        let env = out["settingsConfig"]["env"]
+            .as_object()
+            .expect("settingsConfig.env should be object");
+        assert_eq!(
+            env.get("ANTHROPIC_MODEL").and_then(|v| v.as_str()),
+            Some("model-main")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_SMALL_FAST_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("model-small-fast")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+                .and_then(|v| v.as_str()),
+            None
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(|v| v.as_str()),
+            None
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                .and_then(|v| v.as_str()),
+            None
         );
     }
 
@@ -1408,5 +1865,104 @@ mod tests {
         assert_eq!(form.name.value, "");
         assert_eq!(form.command.value, "");
         assert_eq!(form.args.value, "");
+    }
+
+    #[test]
+    fn provider_add_form_common_config_json_merges_into_settings_for_preview_and_submit() {
+        let mut form = ProviderAddFormState::new(AppType::Claude);
+        form.id.set("p1");
+        form.name.set("Provider One");
+        form.include_common_config = true;
+        form.claude_base_url.set("https://provider.example");
+        form.claude_api_key.set("sk-provider");
+
+        let merged = form
+            .to_provider_json_value_with_common_config(
+                r#"{
+                    "alwaysThinkingEnabled": false,
+                    "env": {
+                        "ANTHROPIC_BASE_URL": "https://common.example",
+                        "COMMON_FLAG": "1"
+                    }
+                }"#,
+            )
+            .expect("common config should merge");
+        let settings = merged
+            .get("settingsConfig")
+            .expect("settingsConfig should exist");
+
+        assert_eq!(settings["alwaysThinkingEnabled"], false);
+        assert_eq!(settings["env"]["COMMON_FLAG"], "1");
+        assert_eq!(
+            settings["env"]["ANTHROPIC_BASE_URL"], "https://provider.example",
+            "provider field should override common snippet value"
+        );
+        assert_eq!(settings["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-provider");
+    }
+
+    #[test]
+    fn provider_add_form_apply_provider_json_updates_fields_and_preserves_include_toggle() {
+        let mut form = ProviderAddFormState::new(AppType::Claude);
+        form.include_common_config = false;
+        form.extra = json!({
+            "category": "custom"
+        });
+
+        let parsed = Provider::with_id(
+            "json-id".to_string(),
+            "JSON Provider".to_string(),
+            json!({
+                "alwaysThinkingEnabled": false,
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://json.example"
+                }
+            }),
+            Some("https://site.example".to_string()),
+        );
+
+        form.apply_provider_json_to_fields(&parsed);
+
+        assert_eq!(form.id.value, "json-id");
+        assert_eq!(form.name.value, "JSON Provider");
+        assert_eq!(form.website_url.value, "https://site.example");
+        assert_eq!(form.claude_base_url.value, "https://json.example");
+        assert!(
+            !form.include_common_config,
+            "include_common_config should be preserved when editor JSON omits meta.applyCommonConfig"
+        );
+        assert_eq!(form.extra["category"], "custom");
+        assert_eq!(form.extra["settingsConfig"]["alwaysThinkingEnabled"], false);
+    }
+
+    #[test]
+    fn provider_edit_form_apply_provider_json_keeps_locked_id() {
+        let original = Provider::with_id(
+            "locked-id".to_string(),
+            "Original".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://before.example"
+                }
+            }),
+            None,
+        );
+        let mut form = ProviderAddFormState::from_provider(AppType::Claude, &original);
+
+        let edited = Provider::with_id(
+            "changed-id".to_string(),
+            "Edited Name".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://after.example"
+                }
+            }),
+            None,
+        );
+
+        form.apply_provider_json_to_fields(&edited);
+
+        assert_eq!(form.id.value, "locked-id");
+        assert_eq!(form.name.value, "Edited Name");
+        assert_eq!(form.claude_base_url.value, "https://after.example");
     }
 }

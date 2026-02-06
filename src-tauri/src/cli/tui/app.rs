@@ -9,8 +9,8 @@ use crate::services::skill::SyncMethod;
 
 use super::data::UiData;
 use super::form::{
-    CodexWireApi, FormFocus, FormMode, FormState, GeminiAuthType, McpAddField, McpAddFormState,
-    ProviderAddField, ProviderAddFormState,
+    strip_provider_internal_fields, CodexWireApi, FormFocus, FormMode, FormState, GeminiAuthType,
+    McpAddField, McpAddFormState, ProviderAddField, ProviderAddFormState,
 };
 use super::route::{NavItem, Route};
 
@@ -128,6 +128,10 @@ pub enum Overlay {
     },
     TextView(TextViewState),
     CommonSnippetView(TextViewState),
+    ClaudeModelPicker {
+        selected: usize,
+        editing: bool,
+    },
     McpAppsPicker {
         id: String,
         name: String,
@@ -166,6 +170,7 @@ pub enum EditorKind {
 #[derive(Debug, Clone)]
 pub enum EditorSubmit {
     PromptEdit { id: String },
+    ProviderFormApplyJson,
     ProviderAdd,
     ProviderEdit { id: String },
     McpAdd,
@@ -1616,6 +1621,99 @@ impl App {
                 }
                 _ => Action::None,
             },
+            Overlay::ClaudeModelPicker { selected, editing } => {
+                let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() else {
+                    self.overlay = Overlay::None;
+                    return Action::None;
+                };
+                if !matches!(provider.app_type, AppType::Claude) {
+                    self.overlay = Overlay::None;
+                    return Action::None;
+                }
+
+                *selected = (*selected).min(4);
+
+                if *editing {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter => {
+                            *editing = false;
+                            Action::None
+                        }
+                        KeyCode::Left => {
+                            if let Some(input) = provider.claude_model_input_mut(*selected) {
+                                input.move_left();
+                            }
+                            Action::None
+                        }
+                        KeyCode::Right => {
+                            if let Some(input) = provider.claude_model_input_mut(*selected) {
+                                input.move_right();
+                            }
+                            Action::None
+                        }
+                        KeyCode::Home => {
+                            if let Some(input) = provider.claude_model_input_mut(*selected) {
+                                input.move_home();
+                            }
+                            Action::None
+                        }
+                        KeyCode::End => {
+                            if let Some(input) = provider.claude_model_input_mut(*selected) {
+                                input.move_end();
+                            }
+                            Action::None
+                        }
+                        KeyCode::Backspace => {
+                            if let Some(input) = provider.claude_model_input_mut(*selected) {
+                                if input.backspace() {
+                                    provider.mark_claude_model_config_touched();
+                                }
+                            }
+                            Action::None
+                        }
+                        KeyCode::Delete => {
+                            if let Some(input) = provider.claude_model_input_mut(*selected) {
+                                if input.delete() {
+                                    provider.mark_claude_model_config_touched();
+                                }
+                            }
+                            Action::None
+                        }
+                        KeyCode::Char(c) => {
+                            if c.is_control() {
+                                return Action::None;
+                            }
+                            if let Some(input) = provider.claude_model_input_mut(*selected) {
+                                if input.insert_char(c) {
+                                    provider.mark_claude_model_config_touched();
+                                }
+                            }
+                            Action::None
+                        }
+                        _ => Action::None,
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Esc => {
+                            self.overlay = Overlay::None;
+                            Action::None
+                        }
+                        KeyCode::Up => {
+                            *selected = selected.saturating_sub(1);
+                            Action::None
+                        }
+                        KeyCode::Down => {
+                            *selected = (*selected + 1).min(4);
+                            Action::None
+                        }
+                        KeyCode::Char(' ') | KeyCode::Enter => {
+                            *editing = true;
+                            Action::None
+                        }
+                        _ => Action::None,
+                    }
+                }
+            }
             Overlay::Loading { .. } => match key.code {
                 KeyCode::Esc => {
                     self.overlay = Overlay::None;
@@ -2013,6 +2111,13 @@ impl App {
                                 };
                                 return Action::None;
                             }
+                            ProviderAddField::ClaudeModelConfig => {
+                                self.overlay = Overlay::ClaudeModelPicker {
+                                    selected: 0,
+                                    editing: false,
+                                };
+                                return Action::None;
+                            }
                             _ => {
                                 if selected == ProviderAddField::Id && !provider.is_id_editable() {
                                     return Action::None;
@@ -2028,6 +2133,28 @@ impl App {
                 }
             } else if provider.focus == FormFocus::JsonPreview {
                 match key.code {
+                    KeyCode::Enter => {
+                        let provider_json = match provider
+                            .to_provider_json_value_with_common_config(&data.config.common_snippet)
+                        {
+                            Ok(value) => value,
+                            Err(err) => {
+                                self.push_toast(err, ToastKind::Error);
+                                return Action::None;
+                            }
+                        };
+
+                        let display_value = strip_provider_internal_fields(&provider_json);
+                        let content = serde_json::to_string_pretty(&display_value)
+                            .unwrap_or_else(|_| "{}".to_string());
+                        self.open_editor(
+                            texts::tui_form_json_title(),
+                            EditorKind::Json,
+                            content,
+                            EditorSubmit::ProviderFormApplyJson,
+                        );
+                        return Action::None;
+                    }
                     KeyCode::Up => {
                         provider.json_scroll = provider.json_scroll.saturating_sub(1);
                         return Action::None;
@@ -2186,7 +2313,16 @@ impl App {
                         return Action::None;
                     }
 
-                    let content = serde_json::to_string_pretty(&provider.to_provider_json_value())
+                    let provider_json = match provider
+                        .to_provider_json_value_with_common_config(&data.config.common_snippet)
+                    {
+                        Ok(value) => value,
+                        Err(err) => {
+                            self.push_toast(err, ToastKind::Error);
+                            return Action::None;
+                        }
+                    };
+                    let content = serde_json::to_string_pretty(&provider_json)
                         .unwrap_or_else(|_| "{}".to_string());
 
                     return Action::EditorSubmit {
@@ -3391,5 +3527,164 @@ mod tests {
             other => panic!("expected ProviderAdd form, got: {other:?}"),
         };
         assert_eq!(focus, super::super::form::FormFocus::Fields);
+    }
+
+    #[test]
+    fn provider_add_form_json_focus_enter_opens_json_editor() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+
+        let data = UiData::default();
+        app.on_key(key(KeyCode::Char('a')), &data);
+        app.on_key(key(KeyCode::Enter), &data); // apply template -> fields
+        app.on_key(key(KeyCode::Tab), &data); // fields -> json
+
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        assert!(
+            app.editor.is_some(),
+            "Enter on provider JSON preview should open in-app JSON editor"
+        );
+        assert!(matches!(
+            app.editor.as_ref().map(|editor| &editor.submit),
+            Some(EditorSubmit::ProviderFormApplyJson)
+        ));
+    }
+
+    #[test]
+    fn provider_form_ctrl_s_merges_common_snippet_into_submitted_json() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+
+        let mut data = UiData::default();
+        data.config.common_snippet = r#"{"alwaysThinkingEnabled":false,"statusLine":{"type":"command","command":"~/.claude/statusline.sh","padding":0}}"#.to_string();
+
+        app.on_key(key(KeyCode::Char('a')), &data);
+        app.on_key(key(KeyCode::Enter), &data); // apply template -> fields
+
+        if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
+            form.id.set("p1");
+            form.name.set("Provider One");
+            form.include_common_config = true;
+            form.claude_base_url.set("https://api.example.com");
+        } else {
+            panic!("expected ProviderAdd form");
+        }
+
+        let submit = app.on_key(ctrl(KeyCode::Char('s')), &data);
+        assert!(matches!(submit, Action::EditorSubmit { .. }));
+        let Action::EditorSubmit { content, .. } = submit else {
+            unreachable!("expected submit action");
+        };
+        assert!(
+            content.contains("\"alwaysThinkingEnabled\""),
+            "submitted provider JSON should include merged common snippet keys when enabled"
+        );
+        assert!(
+            content.contains("\"statusLine\""),
+            "submitted provider JSON should include nested common snippet keys when enabled"
+        );
+    }
+
+    #[test]
+    fn provider_claude_model_config_field_enter_opens_overlay() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+
+        let data = UiData::default();
+        app.on_key(key(KeyCode::Char('a')), &data);
+        app.on_key(key(KeyCode::Enter), &data);
+
+        if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
+            form.focus = super::super::form::FormFocus::Fields;
+            form.editing = false;
+            form.field_idx = form
+                .fields()
+                .iter()
+                .position(|field| *field == ProviderAddField::ClaudeModelConfig)
+                .expect("ClaudeModelConfig field should exist");
+        } else {
+            panic!("expected ProviderAdd form");
+        }
+
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::ClaudeModelPicker {
+                selected: 0,
+                editing: false
+            }
+        ));
+    }
+
+    #[test]
+    fn claude_model_overlay_editing_updates_form_value() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+
+        let data = UiData::default();
+        app.on_key(key(KeyCode::Char('a')), &data);
+        app.on_key(key(KeyCode::Enter), &data);
+
+        if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
+            form.focus = super::super::form::FormFocus::Fields;
+            form.editing = false;
+            form.field_idx = form
+                .fields()
+                .iter()
+                .position(|field| *field == ProviderAddField::ClaudeModelConfig)
+                .expect("ClaudeModelConfig field should exist");
+        } else {
+            panic!("expected ProviderAdd form");
+        }
+
+        app.on_key(key(KeyCode::Enter), &data);
+        app.on_key(key(KeyCode::Enter), &data); // enter editing mode in overlay
+        app.on_key(key(KeyCode::Char('m')), &data);
+        app.on_key(key(KeyCode::Char('1')), &data);
+
+        let model = match app.form.as_ref() {
+            Some(super::super::form::FormState::ProviderAdd(form)) => {
+                form.claude_model.value.clone()
+            }
+            other => panic!("expected ProviderAdd form, got: {other:?}"),
+        };
+        assert_eq!(model, "m1");
+    }
+
+    #[test]
+    fn claude_model_overlay_esc_closes_without_exiting_parent_form() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+
+        let data = UiData::default();
+        app.on_key(key(KeyCode::Char('a')), &data);
+        app.on_key(key(KeyCode::Enter), &data);
+
+        if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
+            form.focus = super::super::form::FormFocus::Fields;
+            form.editing = false;
+            form.field_idx = form
+                .fields()
+                .iter()
+                .position(|field| *field == ProviderAddField::ClaudeModelConfig)
+                .expect("ClaudeModelConfig field should exist");
+        } else {
+            panic!("expected ProviderAdd form");
+        }
+
+        app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(app.overlay, Overlay::ClaudeModelPicker { .. }));
+
+        let action = app.on_key(key(KeyCode::Esc), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(app.overlay, Overlay::None));
+        assert!(matches!(app.form, Some(FormState::ProviderAdd(_))));
     }
 }

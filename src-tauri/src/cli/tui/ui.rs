@@ -1196,7 +1196,10 @@ fn add_form_key_items(focus: FormFocus, editing: bool) -> Vec<(&'static str, &'s
                 ]);
             }
         }
-        FormFocus::JsonPreview => keys.extend([("↑↓", texts::tui_key_scroll())]),
+        FormFocus::JsonPreview => keys.extend([
+            ("Enter", texts::tui_key_edit_mode()),
+            ("↑↓", texts::tui_key_scroll()),
+        ]),
     }
 
     keys
@@ -1311,14 +1314,14 @@ fn render_form_json_preview(
 fn render_add_form(
     frame: &mut Frame<'_>,
     app: &App,
-    _data: &UiData,
+    data: &UiData,
     form: &FormState,
     area: Rect,
     theme: &super::theme::Theme,
 ) {
     match form {
         FormState::ProviderAdd(provider) => {
-            render_provider_add_form(frame, app, provider, area, theme)
+            render_provider_add_form(frame, app, data, provider, area, theme)
         }
         FormState::McpAdd(mcp) => render_mcp_add_form(frame, app, mcp, area, theme),
     }
@@ -1327,6 +1330,7 @@ fn render_add_form(
 fn render_provider_add_form(
     frame: &mut Frame<'_>,
     app: &App,
+    data: &UiData,
     provider: &super::form::ProviderAddFormState,
     area: Rect,
     theme: &super::theme::Theme,
@@ -1472,8 +1476,10 @@ fn render_provider_add_form(
     }
 
     // JSON Preview
-    let json_value =
-        super::form::strip_provider_internal_fields(&provider.to_provider_json_value());
+    let json_value = provider
+        .to_provider_json_value_with_common_config(&data.config.common_snippet)
+        .unwrap_or_else(|_| provider.to_provider_json_value());
+    let json_value = super::form::strip_provider_internal_fields(&json_value);
     let json_text = serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| "{}".to_string());
     render_form_json_preview(
         frame,
@@ -1498,6 +1504,7 @@ fn provider_field_label_and_value(
         ProviderAddField::Notes => strip_trailing_colon(texts::notes_label()).to_string(),
         ProviderAddField::ClaudeBaseUrl => texts::tui_label_base_url().to_string(),
         ProviderAddField::ClaudeApiKey => texts::tui_label_api_key().to_string(),
+        ProviderAddField::ClaudeModelConfig => texts::tui_label_claude_model_config().to_string(),
         ProviderAddField::CodexBaseUrl => texts::tui_label_base_url().to_string(),
         ProviderAddField::CodexModel => texts::model_label().to_string(),
         ProviderAddField::CodexWireApi => {
@@ -1527,6 +1534,9 @@ fn provider_field_label_and_value(
             } else {
                 "[ ]".to_string()
             }
+        }
+        ProviderAddField::ClaudeModelConfig => {
+            texts::tui_claude_model_config_summary(provider.claude_model_configured_count())
         }
         ProviderAddField::IncludeCommonConfig => {
             if provider.include_common_config {
@@ -1585,6 +1595,9 @@ fn provider_field_editor_line(
                 "requires_openai_auth = {}",
                 provider.codex_requires_openai_auth
             ),
+            ProviderAddField::ClaudeModelConfig => {
+                texts::tui_claude_model_config_open_hint().to_string()
+            }
             ProviderAddField::IncludeCommonConfig => {
                 format!("apply_common_config = {}", provider.include_common_config)
             }
@@ -3018,6 +3031,128 @@ fn render_overlay(frame: &mut Frame<'_>, app: &App, data: &UiData, theme: &super
                 .collect::<Vec<_>>();
 
             frame.render_widget(Paragraph::new(shown).wrap(Wrap { trim: false }), chunks[1]);
+        }
+        Overlay::ClaudeModelPicker { selected, editing } => {
+            let area = centered_rect(78, 62, frame.area());
+            frame.render_widget(Clear, area);
+
+            let outer = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Plain)
+                .border_style(Style::default().fg(theme.dim))
+                .title(texts::tui_claude_model_config_popup_title());
+            frame.render_widget(outer.clone(), area);
+            let inner = outer.inner(area);
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Min(0),
+                    Constraint::Length(3),
+                ])
+                .split(inner);
+
+            render_key_bar(
+                frame,
+                chunks[0],
+                theme,
+                &[
+                    ("↑↓", texts::tui_key_select()),
+                    (
+                        "Enter",
+                        if *editing {
+                            texts::tui_key_exit_edit()
+                        } else {
+                            texts::tui_key_edit_mode()
+                        },
+                    ),
+                    (
+                        "Esc",
+                        if *editing {
+                            texts::tui_key_exit_edit()
+                        } else {
+                            texts::tui_key_close()
+                        },
+                    ),
+                ],
+            );
+
+            if let Some(FormState::ProviderAdd(provider)) = app.form.as_ref() {
+                let labels = [
+                    texts::tui_claude_model_main_label(),
+                    texts::tui_claude_reasoning_model_label(),
+                    texts::tui_claude_default_haiku_model_label(),
+                    texts::tui_claude_default_sonnet_model_label(),
+                    texts::tui_claude_default_opus_model_label(),
+                ];
+
+                let header = Row::new(vec![
+                    Cell::from(pad2(texts::tui_header_field())),
+                    Cell::from(texts::tui_header_value()),
+                ])
+                .style(Style::default().fg(theme.dim).add_modifier(Modifier::BOLD));
+
+                let rows = labels.iter().enumerate().map(|(idx, label)| {
+                    let value = provider
+                        .claude_model_input(idx)
+                        .map(|input| input.value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| texts::tui_na().to_string());
+                    Row::new(vec![Cell::from(pad2(label)), Cell::from(value)])
+                });
+
+                let table = Table::new(rows, [Constraint::Length(29), Constraint::Min(10)])
+                    .header(header)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(texts::tui_form_fields_title()),
+                    )
+                    .row_highlight_style(selection_style(theme))
+                    .highlight_symbol(highlight_symbol(theme));
+
+                let mut state = TableState::default();
+                state.select(Some((*selected).min(labels.len().saturating_sub(1))));
+                frame.render_stateful_widget(table, chunks[1], &mut state);
+
+                let input_block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Plain)
+                    .border_style(if *editing {
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.dim)
+                    })
+                    .title(if *editing {
+                        texts::tui_form_editing_title()
+                    } else {
+                        texts::tui_form_input_title()
+                    });
+                frame.render_widget(input_block.clone(), chunks[2]);
+                let input_inner = input_block.inner(chunks[2]);
+
+                if let Some(input) = provider.claude_model_input(*selected) {
+                    let (visible, cursor_x) =
+                        visible_text_window(&input.value, input.cursor, input_inner.width as usize);
+                    frame.render_widget(
+                        Paragraph::new(Line::raw(visible)).wrap(Wrap { trim: false }),
+                        input_inner,
+                    );
+                    if *editing {
+                        let x = input_inner.x + cursor_x.min(input_inner.width.saturating_sub(1));
+                        let y = input_inner.y;
+                        frame.set_cursor_position((x, y));
+                    }
+                }
+            } else {
+                frame.render_widget(
+                    Paragraph::new(Line::raw(texts::tui_provider_not_found())),
+                    chunks[1],
+                );
+            }
         }
         Overlay::McpAppsPicker {
             name,
