@@ -7,6 +7,46 @@ All notable changes to CC Switch CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.7.0] - 2026-02-07
+
+### Added
+
+- **WebDAV Sync (TUI)**: Add WebDAV sync workflow with TUI controls and home status.
+- **CLI**: Add hardened self-update command.
+- **Settings**: Add Claude Code onboarding skip toggle.
+- **Providers (TUI)**: Add Claude model popup config in provider form.
+
+### Changed
+
+- **Providers (TUI)**: Improve provider JSON editor and modal UX.
+
+### Fixed
+
+- **TUI**: Fix general config editor scroll offset; align editor cursor under soft-wrap; use ASCII PackyCode chip label.
+- **Codex**: Stabilize OpenAI auth switching; use TOML snippets and avoid `auth.json`.
+- **CLI**: Remove unused global `--json` flag.
+- **i18n**: Codex snippet prompt uses TOML.
+
+### Commits (since v4.6.2)
+
+- ec78dad fix(tui): use ASCII PackyCode chip label
+- f6ba975 feat(provider): support notes field across cli and tui
+- 2f1e516 feat(tui): add Claude model popup config in provider form
+- be05cbf feat(tui): improve provider JSON editor and modal UX
+- 01897e3 feat(settings): add Claude Code onboarding skip toggle
+- 71374dd Merge pull request #25 from SaladDay/sync-upstream-skip-claude-onboarding
+- 64dbff8 fix(cli): remove unused global --json flag
+- 672299c fix(codex): stabilize OpenAI auth switching
+- ada90fc fix(tui): align editor cursor under soft-wrap
+- b69ced1 feat(cli): add hardened self-update command
+- 108e291 feat(webdav): add sync workflow, tui controls, and home status
+- 0624d01 Merge pull request #26 from SaladDay/bugfix-general-config-editor-scroll-offset
+- 50fbe19 fix(codex): use TOML snippets and avoid auth.json
+- 590c461 fix(i18n): codex snippet prompt uses TOML
+- a9d63b5 Merge pull request #27 from skyswordw/codex/add-self-update-command-clean-upstream
+- b3cd0ef Merge origin/main into feat/webdav-sync-v1
+- 1114997 Merge pull request #28 from SaladDay/feat/webdav-sync-v1
+
 ## [4.6.2] - 2026-02-05
 
 ### Changed
