@@ -164,7 +164,7 @@ fn highlight_symbol(theme: &super::theme::Theme) -> &'static str {
     if theme.no_color {
         texts::tui_highlight_symbol()
     } else {
-        " "
+        ""
     }
 }
 
@@ -261,7 +261,10 @@ pub fn render(frame: &mut Frame<'_>, app: &App, data: &UiData) {
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(nav_pane_width()), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(nav_pane_width(&theme)),
+            Constraint::Min(0),
+        ])
         .split(root[1]);
 
     render_nav(frame, app, body[0], &theme);
@@ -415,12 +418,12 @@ fn nav_label_variants(item: NavItem) -> (&'static str, &'static str) {
     }
 }
 
-fn nav_pane_width() -> u16 {
+fn nav_pane_width(theme: &super::theme::Theme) -> u16 {
     const NAV_BORDER_WIDTH: u16 = 2;
-    const NAV_HIGHLIGHT_WIDTH: u16 = 1;
     const NAV_ICON_COL_WIDTH: u16 = 3;
     const NAV_TEXT_MIN_WIDTH: u16 = 10;
     const NAV_TEXT_EXTRA_WIDTH: u16 = 5;
+    let highlight_width = UnicodeWidthStr::width(highlight_symbol(theme)) as u16;
 
     let max_text_width = NavItem::ALL
         .iter()
@@ -440,7 +443,7 @@ fn nav_pane_width() -> u16 {
         .max(NAV_TEXT_MIN_WIDTH);
 
     NAV_BORDER_WIDTH
-        .saturating_add(NAV_HIGHLIGHT_WIDTH)
+        .saturating_add(highlight_width)
         .saturating_add(NAV_ICON_COL_WIDTH)
         .saturating_add(text_col_width)
 }
@@ -1536,8 +1539,11 @@ fn render_provider_add_form(
             if matches!(field, ProviderAddField::CommonConfigDivider) {
                 let dashes_left = "┄".repeat(40);
                 let dashes_right = "┄".repeat(200);
-                Row::new(vec![Cell::from(pad1(&dashes_left)), Cell::from(dashes_right)])
-                    .style(Style::default().fg(theme.dim))
+                Row::new(vec![
+                    Cell::from(pad1(&dashes_left)),
+                    Cell::from(dashes_right),
+                ])
+                .style(Style::default().fg(theme.dim))
             } else {
                 Row::new(vec![Cell::from(pad1(label)), Cell::from(value.clone())])
             }
@@ -3208,7 +3214,7 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect, theme: &super::th
 }
 
 fn render_overlay(frame: &mut Frame<'_>, app: &App, data: &UiData, theme: &super::theme::Theme) {
-    let content_area = content_pane_rect(frame.area());
+    let content_area = content_pane_rect(frame.area(), theme);
 
     match &app.overlay {
         Overlay::None => {}
@@ -3874,7 +3880,7 @@ fn render_overlay(frame: &mut Frame<'_>, app: &App, data: &UiData, theme: &super
     }
 }
 
-fn content_pane_rect(area: Rect) -> Rect {
+fn content_pane_rect(area: Rect, theme: &super::theme::Theme) -> Rect {
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -3886,7 +3892,10 @@ fn content_pane_rect(area: Rect) -> Rect {
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(nav_pane_width()), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(nav_pane_width(theme)),
+            Constraint::Min(0),
+        ])
         .split(root[1]);
 
     body[1]
@@ -4227,7 +4236,7 @@ mod tests {
         let buf = render(&app, &data);
         let theme = theme_for(&app.app_type);
 
-        let content = super::content_pane_rect(buf.area);
+        let content = super::content_pane_rect(buf.area, &theme);
         let border_cell = &buf[(content.x, content.y)];
         assert_eq!(border_cell.symbol(), "┌");
         assert_eq!(border_cell.fg, theme.accent);
@@ -4540,7 +4549,8 @@ mod tests {
 
         let buf = render(&app, &data);
 
-        let content = super::content_pane_rect(buf.area);
+        let theme = theme_for(&app.app_type);
+        let content = super::content_pane_rect(buf.area, &theme);
         let area = super::centered_rect_fixed(70, 12, content);
         let area_x = area.x;
         let area_y = area.y;
@@ -4604,7 +4614,8 @@ mod tests {
             "expected cancel action hint in confirm overlay key bar"
         );
 
-        let content = super::content_pane_rect(buf.area);
+        let theme = theme_for(&app.app_type);
+        let content = super::content_pane_rect(buf.area, &theme);
         let area = super::centered_rect_fixed(60, 7, content);
 
         assert_eq!(buf[(area.x, area.y)].symbol(), "┌");
