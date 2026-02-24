@@ -216,7 +216,7 @@ const SPONSOR_PROVIDER_PRESETS: [SponsorProviderPreset; 2] = [
         chip_label: "* RightCode",
         website_url: "https://right.codes",
         register_url: "https://www.right.codes/register?aff=ccswitch-cli",
-        promo_code: "cc-switch-cli",
+        promo_code: "",
         partner_promotion_key: "rightcode",
         claude_base_url: "https://www.right.codes/claude",
         codex_base_url: "https://right.codes/codex/v1",
