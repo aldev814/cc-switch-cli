@@ -118,7 +118,96 @@ cc-switch --app gemini prompts list     # List Gemini prompts
 # Supported apps: `claude` (default), `codex`, `gemini`
 ```
 
-See the "Features" section below for full command list.
+See the "Features" section for full command list.
+
+---
+
+## 📥 Installation
+
+### Method 1: Download Pre-built Binaries (Recommended)
+
+Download the latest release from [GitHub Releases](https://github.com/saladday/cc-switch-cli/releases).
+
+#### macOS
+
+```bash
+# Download Universal Binary (recommended, supports Apple Silicon + Intel)
+curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-darwin-universal.tar.gz
+
+# Extract
+tar -xzf cc-switch-cli-darwin-universal.tar.gz
+
+# Add execute permission
+chmod +x cc-switch
+
+# Move to PATH
+sudo mv cc-switch /usr/local/bin/
+
+# If you encounter "cannot be verified" warning
+xattr -cr /usr/local/bin/cc-switch
+```
+
+#### Linux (x64)
+
+```bash
+# Download
+curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-linux-x64-musl.tar.gz
+
+# Extract
+tar -xzf cc-switch-cli-linux-x64-musl.tar.gz
+
+# Add execute permission
+chmod +x cc-switch
+
+# Move to PATH
+sudo mv cc-switch /usr/local/bin/
+```
+
+#### Linux (ARM64)
+
+```bash
+# For Raspberry Pi or ARM servers
+curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-linux-arm64-musl.tar.gz
+tar -xzf cc-switch-cli-linux-arm64-musl.tar.gz
+chmod +x cc-switch
+sudo mv cc-switch /usr/local/bin/
+```
+
+#### Windows
+
+```powershell
+# Download the zip file
+# https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-windows-x64.zip
+
+# After extracting, move cc-switch.exe to a PATH directory, e.g.:
+move cc-switch.exe C:\Windows\System32\
+
+# Or run directly
+.\cc-switch.exe
+```
+
+### Method 2: Build from Source
+
+**Prerequisites:**
+- Rust 1.85+ ([install via rustup](https://rustup.rs/))
+
+**Build:**
+```bash
+git clone https://github.com/saladday/cc-switch-cli.git
+cd cc-switch-cli/src-tauri
+cargo build --release
+
+# Binary location: ./target/release/cc-switch
+```
+
+**Install to System:**
+```bash
+# macOS/Linux
+sudo cp target/release/cc-switch /usr/local/bin/
+
+# Windows
+copy target\release\cc-switch.exe C:\Windows\System32\
+```
 
 ---
 
@@ -264,95 +353,6 @@ cc-switch env list                   # List environment variables
 # Self-update
 cc-switch update                     # Update to latest release
 cc-switch update --version v4.7.2    # Update to a specific version
-```
-
----
-
-## 📥 Installation
-
-### Method 1: Download Pre-built Binaries (Recommended)
-
-Download the latest release from [GitHub Releases](https://github.com/saladday/cc-switch-cli/releases).
-
-#### macOS
-
-```bash
-# Download Universal Binary (recommended, supports Apple Silicon + Intel)
-curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-darwin-universal.tar.gz
-
-# Extract
-tar -xzf cc-switch-cli-darwin-universal.tar.gz
-
-# Add execute permission
-chmod +x cc-switch
-
-# Move to PATH
-sudo mv cc-switch /usr/local/bin/
-
-# If you encounter "cannot be verified" warning
-xattr -cr /usr/local/bin/cc-switch
-```
-
-#### Linux (x64)
-
-```bash
-# Download
-curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-linux-x64-musl.tar.gz
-
-# Extract
-tar -xzf cc-switch-cli-linux-x64-musl.tar.gz
-
-# Add execute permission
-chmod +x cc-switch
-
-# Move to PATH
-sudo mv cc-switch /usr/local/bin/
-```
-
-#### Linux (ARM64)
-
-```bash
-# For Raspberry Pi or ARM servers
-curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-linux-arm64-musl.tar.gz
-tar -xzf cc-switch-cli-linux-arm64-musl.tar.gz
-chmod +x cc-switch
-sudo mv cc-switch /usr/local/bin/
-```
-
-#### Windows
-
-```powershell
-# Download the zip file
-# https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-windows-x64.zip
-
-# After extracting, move cc-switch.exe to a PATH directory, e.g.:
-move cc-switch.exe C:\Windows\System32\
-
-# Or run directly
-.\cc-switch.exe
-```
-
-### Method 2: Build from Source
-
-**Prerequisites:**
-- Rust 1.85+ ([install via rustup](https://rustup.rs/))
-
-**Build:**
-```bash
-git clone https://github.com/saladday/cc-switch-cli.git
-cd cc-switch-cli/src-tauri
-cargo build --release
-
-# Binary location: ./target/release/cc-switch
-```
-
-**Install to System:**
-```bash
-# macOS/Linux
-sudo cp target/release/cc-switch /usr/local/bin/
-
-# Windows
-copy target\release\cc-switch.exe C:\Windows\System32\
 ```
 
 ---

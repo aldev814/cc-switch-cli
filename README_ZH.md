@@ -124,7 +124,96 @@ cc-switch --app gemini prompts list     # 列出 Gemini 提示词
 # 支持的应用：`claude`（默认）、`codex`、`gemini`
 ```
 
-完整命令列表请参考下方「功能特性」章节。
+完整命令列表请参考「功能特性」章节。
+
+---
+
+## 📥 安装
+
+### 方法 1：下载预编译二进制（推荐）
+
+从 [GitHub Releases](https://github.com/saladday/cc-switch-cli/releases) 下载最新版本。
+
+#### macOS
+
+```bash
+# 下载 Universal Binary（推荐，支持 Apple Silicon + Intel）
+curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-darwin-universal.tar.gz
+
+# 解压
+tar -xzf cc-switch-cli-darwin-universal.tar.gz
+
+# 添加执行权限
+chmod +x cc-switch
+
+# 移动到 PATH
+sudo mv cc-switch /usr/local/bin/
+
+# 如遇 "无法验证开发者" 提示
+xattr -cr /usr/local/bin/cc-switch
+```
+
+#### Linux (x64)
+
+```bash
+# 下载
+curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-linux-x64-musl.tar.gz
+
+# 解压
+tar -xzf cc-switch-cli-linux-x64-musl.tar.gz
+
+# 添加执行权限
+chmod +x cc-switch
+
+# 移动到 PATH
+sudo mv cc-switch /usr/local/bin/
+```
+
+#### Linux (ARM64)
+
+```bash
+# 适用于树莓派或 ARM 服务器
+curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-linux-arm64-musl.tar.gz
+tar -xzf cc-switch-cli-linux-arm64-musl.tar.gz
+chmod +x cc-switch
+sudo mv cc-switch /usr/local/bin/
+```
+
+#### Windows
+
+```powershell
+# 下载 zip 文件
+# https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-windows-x64.zip
+
+# 解压后将 cc-switch.exe 移动到 PATH 目录，例如：
+move cc-switch.exe C:\Windows\System32\
+
+# 或者直接运行
+.\cc-switch.exe
+```
+
+### 方法 2：从源码构建
+
+**前提条件：**
+- Rust 1.85+（[通过 rustup 安装](https://rustup.rs/)）
+
+**构建：**
+```bash
+git clone https://github.com/saladday/cc-switch-cli.git
+cd cc-switch-cli/src-tauri
+cargo build --release
+
+# 二进制位置：./target/release/cc-switch
+```
+
+**安装到系统：**
+```bash
+# macOS/Linux
+sudo cp target/release/cc-switch /usr/local/bin/
+
+# Windows
+copy target\release\cc-switch.exe C:\Windows\System32\
+```
 
 ---
 
@@ -270,95 +359,6 @@ cc-switch env list                   # 列出环境变量
 # 自更新
 cc-switch update                     # 更新到最新版本
 cc-switch update --version v4.7.2    # 更新到指定版本
-```
-
----
-
-## 📥 安装
-
-### 方法 1：下载预编译二进制（推荐）
-
-从 [GitHub Releases](https://github.com/saladday/cc-switch-cli/releases) 下载最新版本。
-
-#### macOS
-
-```bash
-# 下载 Universal Binary（推荐，支持 Apple Silicon + Intel）
-curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-darwin-universal.tar.gz
-
-# 解压
-tar -xzf cc-switch-cli-darwin-universal.tar.gz
-
-# 添加执行权限
-chmod +x cc-switch
-
-# 移动到 PATH
-sudo mv cc-switch /usr/local/bin/
-
-# 如遇 "无法验证开发者" 提示
-xattr -cr /usr/local/bin/cc-switch
-```
-
-#### Linux (x64)
-
-```bash
-# 下载
-curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-linux-x64-musl.tar.gz
-
-# 解压
-tar -xzf cc-switch-cli-linux-x64-musl.tar.gz
-
-# 添加执行权限
-chmod +x cc-switch
-
-# 移动到 PATH
-sudo mv cc-switch /usr/local/bin/
-```
-
-#### Linux (ARM64)
-
-```bash
-# 适用于树莓派或 ARM 服务器
-curl -LO https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-linux-arm64-musl.tar.gz
-tar -xzf cc-switch-cli-linux-arm64-musl.tar.gz
-chmod +x cc-switch
-sudo mv cc-switch /usr/local/bin/
-```
-
-#### Windows
-
-```powershell
-# 下载 zip 文件
-# https://github.com/saladday/cc-switch-cli/releases/latest/download/cc-switch-cli-windows-x64.zip
-
-# 解压后将 cc-switch.exe 移动到 PATH 目录，例如：
-move cc-switch.exe C:\Windows\System32\
-
-# 或者直接运行
-.\cc-switch.exe
-```
-
-### 方法 2：从源码构建
-
-**前提条件：**
-- Rust 1.85+（[通过 rustup 安装](https://rustup.rs/)）
-
-**构建：**
-```bash
-git clone https://github.com/saladday/cc-switch-cli.git
-cd cc-switch-cli/src-tauri
-cargo build --release
-
-# 二进制位置：./target/release/cc-switch
-```
-
-**安装到系统：**
-```bash
-# macOS/Linux
-sudo cp target/release/cc-switch /usr/local/bin/
-
-# Windows
-copy target\release\cc-switch.exe C:\Windows\System32\
 ```
 
 ---
