@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, KeyEventKind, MouseEventKind};
+use crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
 use serde_json::json;
 use serde_json::Value;
 
@@ -313,6 +313,7 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
         if event::poll(timeout).map_err(|e| AppError::Message(e.to_string()))? {
             match event::read().map_err(|e| AppError::Message(e.to_string()))? {
                 event::Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    let key = normalize_key_event(key);
                     let action = app.on_key(key, &data);
                     if let Err(err) = handle_action(
                         &mut terminal,
@@ -2249,13 +2250,58 @@ fn parse_repo_spec(raw: &str) -> Result<SkillRepo, AppError> {
     })
 }
 
+/// Normalize terminal-specific key event quirks before dispatching.
+///
+/// Some terminals (e.g. Xshell over SSH) send Backspace as `\x08` (Ctrl+H).
+/// crossterm 0.29 parses `\x08` as `Char('h') + CONTROL` instead of `Backspace`,
+/// because only `\x7F` is mapped to `KeyCode::Backspace`. This function remaps
+/// `Ctrl+H` → `Backspace` so all downstream handlers work correctly.
+fn normalize_key_event(mut key: KeyEvent) -> KeyEvent {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('h') {
+        key.code = KeyCode::Backspace;
+        key.modifiers.remove(KeyModifiers::CONTROL);
+    }
+    key
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
 
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
     use super::app::{App, LoadingKind, Overlay};
     use crate::cli::i18n::texts;
     use crate::AppError;
+
+    #[test]
+    fn normalize_ctrl_h_becomes_backspace() {
+        let key = KeyEvent::new_with_kind(
+            KeyCode::Char('h'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Press,
+        );
+        let normalized = super::normalize_key_event(key);
+        assert_eq!(normalized.code, KeyCode::Backspace);
+        assert!(!normalized.modifiers.contains(KeyModifiers::CONTROL));
+    }
+
+    #[test]
+    fn normalize_plain_h_unchanged() {
+        let key =
+            KeyEvent::new_with_kind(KeyCode::Char('h'), KeyModifiers::NONE, KeyEventKind::Press);
+        let normalized = super::normalize_key_event(key);
+        assert_eq!(normalized.code, KeyCode::Char('h'));
+        assert_eq!(normalized.modifiers, KeyModifiers::NONE);
+    }
+
+    #[test]
+    fn normalize_real_backspace_unchanged() {
+        let key =
+            KeyEvent::new_with_kind(KeyCode::Backspace, KeyModifiers::NONE, KeyEventKind::Press);
+        let normalized = super::normalize_key_event(key);
+        assert_eq!(normalized.code, KeyCode::Backspace);
+    }
 
     #[test]
     fn command_lookup_name_extracts_first_token() {
