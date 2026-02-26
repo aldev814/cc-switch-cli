@@ -20,6 +20,7 @@ Unified management for Claude Code, Codex & Gemini CLI provider configurations, 
 ## 📖 About
 
 This project is a **CLI fork** of [CC-Switch](https://github.com/farion1231/cc-switch). 
+
 🔄 The WebDAV sync feature is fully compatible with the upstream project.
 
 
