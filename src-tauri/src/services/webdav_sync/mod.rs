@@ -65,6 +65,8 @@ const MAX_SYNC_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024; // 512 MB
 pub enum SyncDecision {
     Upload,
     Download,
+    /// V2 远端为空，但检测到 V1 数据，需要用户确认迁移
+    V1MigrationNeeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +125,11 @@ impl WebDavSyncService {
     pub fn download() -> Result<WebDavSyncSummary, AppError> {
         run_http(download())
     }
+
+    /// 用户确认后调用：下载 V1 数据 → 应用 → 上传 V2 → 删除 V1
+    pub fn migrate_v1_to_v2() -> Result<WebDavSyncSummary, AppError> {
+        run_http(migrate_v1_to_v2())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +182,9 @@ async fn upload() -> Result<WebDavSyncSummary, AppError> {
 
     persist_sync_success_best_effort(&mut settings, &snapshot.manifest_hash, etag);
 
+    // 上传成功后，静默清理 V1 远端数据
+    cleanup_v1_remote(&settings, &auth).await;
+
     Ok(WebDavSyncSummary {
         decision: SyncDecision::Upload,
         message: "WebDAV upload completed".to_string(),
@@ -185,39 +195,55 @@ async fn download() -> Result<WebDavSyncSummary, AppError> {
     let mut settings = load_webdav_settings()?;
     let auth = webdav::auth_from_credentials(&settings.username, &settings.password);
 
-    // 下载 manifest
+    // 下载 V2 manifest
     let manifest_url = build_artifact_url(&settings, REMOTE_MANIFEST)?;
-    let (manifest_bytes, etag) = webdav::get_bytes(&manifest_url, &auth, Some(MAX_MANIFEST_BYTES))
-        .await?
-        .ok_or_else(|| localized(
-            "webdav.sync.remote_empty",
-            "远端没有可下载的同步数据",
-            "No downloadable sync data found on the remote",
-        ))?;
+    let v2_result = webdav::get_bytes(&manifest_url, &auth, Some(MAX_MANIFEST_BYTES)).await?;
 
-    let manifest: SyncManifest =
-        serde_json::from_slice(&manifest_bytes).map_err(|e| AppError::Json {
-            path: REMOTE_MANIFEST.to_string(),
-            source: e,
-        })?;
-    validate_manifest_compat(&manifest)?;
+    match v2_result {
+        Some((manifest_bytes, etag)) => {
+            // V2 数据存在，正常下载流程
+            let manifest: SyncManifest =
+                serde_json::from_slice(&manifest_bytes).map_err(|e| AppError::Json {
+                    path: REMOTE_MANIFEST.to_string(),
+                    source: e,
+                })?;
+            validate_manifest_compat(&manifest)?;
 
-    let manifest_hash = sha256_hex(&manifest_bytes);
+            let manifest_hash = sha256_hex(&manifest_bytes);
 
-    // 下载 artifacts
-    let db_sql = download_and_verify(&settings, &auth, REMOTE_DB_SQL, &manifest.artifacts).await?;
-    let skills_zip =
-        download_and_verify(&settings, &auth, REMOTE_SKILLS_ZIP, &manifest.artifacts).await?;
+            let db_sql =
+                download_and_verify(&settings, &auth, REMOTE_DB_SQL, &manifest.artifacts).await?;
+            let skills_zip =
+                download_and_verify(&settings, &auth, REMOTE_SKILLS_ZIP, &manifest.artifacts)
+                    .await?;
 
-    // 应用快照（带 skills 备份回滚）
-    apply_snapshot(&db_sql, &skills_zip)?;
+            apply_snapshot(&db_sql, &skills_zip)?;
+            persist_sync_success_best_effort(&mut settings, &manifest_hash, etag);
 
-    persist_sync_success_best_effort(&mut settings, &manifest_hash, etag);
+            // V2 下载成功，顺手清理 V1 残留
+            cleanup_v1_remote(&settings, &auth).await;
 
-    Ok(WebDavSyncSummary {
-        decision: SyncDecision::Download,
-        message: "WebDAV download completed".to_string(),
-    })
+            Ok(WebDavSyncSummary {
+                decision: SyncDecision::Download,
+                message: "WebDAV download completed".to_string(),
+            })
+        }
+        None => {
+            // V2 为空，检测 V1
+            if detect_v1_manifest(&settings, &auth).await?.is_some() {
+                Ok(WebDavSyncSummary {
+                    decision: SyncDecision::V1MigrationNeeded,
+                    message: String::new(),
+                })
+            } else {
+                Err(localized(
+                    "webdav.sync.remote_empty",
+                    "远端没有可下载的同步数据",
+                    "No downloadable sync data found on the remote",
+                ))
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -582,6 +608,179 @@ where
             format!("Failed to create async runtime: {e}"),
         ))?;
     runtime.block_on(future)
+}
+
+// ---------------------------------------------------------------------------
+// V1 → V2 迁移兼容
+// ---------------------------------------------------------------------------
+
+const V1_PROTOCOL_VERSION: u32 = 1;
+
+/// V1 manifest 类型（仅用于反序列化旧数据）
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct V1Manifest {
+    format: String,
+    version: u32,
+    #[allow(dead_code)]
+    updated_at: String,
+    #[allow(dead_code)]
+    updated_by: String,
+    artifacts: V1ManifestArtifacts,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct V1ManifestArtifacts {
+    db_sql: V1ArtifactMeta,
+    skills_zip: V1ArtifactMeta,
+    #[allow(dead_code)]
+    settings_sync: V1ArtifactMeta,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct V1ArtifactMeta {
+    #[allow(dead_code)]
+    path: String,
+    sha256: String,
+    size: u64,
+}
+
+fn v1_remote_dir_segments(settings: &WebDavSyncSettings) -> Vec<String> {
+    let mut segments = Vec::new();
+    segments.extend(webdav::path_segments(&settings.remote_root).map(str::to_string));
+    segments.push(format!("v{V1_PROTOCOL_VERSION}"));
+    segments.extend(webdav::path_segments(&settings.profile).map(str::to_string));
+    segments
+}
+
+fn build_v1_artifact_url(
+    settings: &WebDavSyncSettings,
+    file_name: &str,
+) -> Result<String, AppError> {
+    let mut segments = v1_remote_dir_segments(settings);
+    segments.extend(webdav::path_segments(file_name).map(str::to_string));
+    webdav::build_remote_url(&settings.base_url, &segments)
+}
+
+/// 检测远端是否存在 V1 manifest，返回 Some(manifest) 或 None
+async fn detect_v1_manifest(
+    settings: &WebDavSyncSettings,
+    auth: &webdav::WebDavAuth,
+) -> Result<Option<V1Manifest>, AppError> {
+    let url = build_v1_artifact_url(settings, REMOTE_MANIFEST)?;
+    let result = webdav::get_bytes(&url, auth, Some(MAX_MANIFEST_BYTES)).await?;
+    match result {
+        None => Ok(None),
+        Some((bytes, _)) => {
+            let manifest: V1Manifest = match serde_json::from_slice(&bytes) {
+                Ok(m) => m,
+                Err(e) => {
+                    log::debug!("[WebDAV] V1 manifest parse failed, treating as absent: {e}");
+                    return Ok(None);
+                }
+            };
+            if manifest.format != PROTOCOL_FORMAT || manifest.version != V1_PROTOCOL_VERSION {
+                return Ok(None);
+            }
+            Ok(Some(manifest))
+        }
+    }
+}
+
+/// 下载 V1 artifact 并校验
+async fn download_v1_artifact(
+    settings: &WebDavSyncSettings,
+    auth: &webdav::WebDavAuth,
+    file_name: &str,
+    meta: &V1ArtifactMeta,
+) -> Result<Vec<u8>, AppError> {
+    if meta.size > MAX_SYNC_ARTIFACT_BYTES {
+        let max_mb = MAX_SYNC_ARTIFACT_BYTES / 1024 / 1024;
+        return Err(localized(
+            "webdav.sync.v1_artifact_too_large",
+            format!("V1 artifact {file_name} 超过下载上限（{max_mb} MB）"),
+            format!("V1 artifact {file_name} exceeds download limit ({max_mb} MB)"),
+        ));
+    }
+
+    let url = build_v1_artifact_url(settings, file_name)?;
+    let (bytes, _) = webdav::get_bytes(&url, auth, Some(MAX_SYNC_ARTIFACT_BYTES))
+        .await?
+        .ok_or_else(|| localized(
+            "webdav.sync.v1_artifact_missing",
+            format!("V1 远端缺少 artifact: {file_name}"),
+            format!("V1 remote artifact missing: {file_name}"),
+        ))?;
+
+    if bytes.len() as u64 != meta.size {
+        return Err(localized(
+            "webdav.sync.v1_artifact_size_mismatch",
+            format!("V1 artifact {file_name} 大小不匹配"),
+            format!("V1 artifact {file_name} size mismatch"),
+        ));
+    }
+
+    let actual_hash = sha256_hex(&bytes);
+    if actual_hash != meta.sha256 {
+        return Err(localized(
+            "webdav.sync.v1_artifact_hash_mismatch",
+            format!("V1 artifact {file_name} SHA256 校验失败"),
+            format!("V1 artifact {file_name} SHA256 verification failed"),
+        ));
+    }
+
+    Ok(bytes)
+}
+
+/// 删除 V1 远端目录（best-effort）
+async fn cleanup_v1_remote(settings: &WebDavSyncSettings, auth: &webdav::WebDavAuth) {
+    let segments = v1_remote_dir_segments(settings);
+    let url = match webdav::build_remote_url(&settings.base_url, &segments) {
+        Ok(u) => u,
+        Err(_) => return,
+    };
+    // WebDAV DELETE on a collection removes the directory and all contents
+    match webdav::delete_collection(&url, auth).await {
+        Ok(true) => log::info!("[WebDAV] V1 remote data cleaned up"),
+        Ok(false) => log::debug!("[WebDAV] V1 remote data already gone"),
+        Err(e) => log::warn!("[WebDAV] Failed to clean up V1 remote data: {e}"),
+    }
+}
+
+/// 迁移 V1 → V2：下载 V1 数据 → 本地应用 → 上传 V2 → 删除 V1
+async fn migrate_v1_to_v2() -> Result<WebDavSyncSummary, AppError> {
+    let settings = load_webdav_settings()?;
+    let auth = webdav::auth_from_credentials(&settings.username, &settings.password);
+
+    // 1. 下载 V1 manifest
+    let v1_manifest = detect_v1_manifest(&settings, &auth)
+        .await?
+        .ok_or_else(|| localized(
+            "webdav.sync.v1_not_found",
+            "远端未找到 V1 同步数据",
+            "No V1 sync data found on the remote",
+        ))?;
+
+    // 2. 下载 V1 artifacts（V1 的 settings_sync 不迁移，V2 不再同步该数据）
+    let db_sql = download_v1_artifact(
+        &settings, &auth, REMOTE_DB_SQL, &v1_manifest.artifacts.db_sql,
+    ).await?;
+    let skills_zip = download_v1_artifact(
+        &settings, &auth, REMOTE_SKILLS_ZIP, &v1_manifest.artifacts.skills_zip,
+    ).await?;
+
+    // 3. 应用到本地
+    apply_snapshot(&db_sql, &skills_zip)?;
+
+    // 4. 重新上传为 V2 格式（upload 内部会 best-effort 清理 V1 远端数据）
+    upload().await?;
+
+    Ok(WebDavSyncSummary {
+        decision: SyncDecision::Download,
+        message: "V1 → V2 migration completed".to_string(),
+    })
 }
 
 // ---------------------------------------------------------------------------

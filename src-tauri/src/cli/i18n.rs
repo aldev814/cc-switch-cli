@@ -3072,6 +3072,38 @@ pub mod texts {
         }
     }
 
+    pub fn tui_webdav_v1_migration_title() -> &'static str {
+        if is_chinese() {
+            "发现旧版同步数据"
+        } else {
+            "Legacy sync data detected"
+        }
+    }
+
+    pub fn tui_webdav_v1_migration_message() -> &'static str {
+        if is_chinese() {
+            "远端存在 V1 格式的同步数据，是否迁移到 V2？\n迁移将下载旧数据、应用到本地、重新上传为新格式，并清理旧数据。"
+        } else {
+            "V1 sync data found on remote. Migrate to V2?\nThis will download old data, apply locally, re-upload as V2, and clean up V1 data."
+        }
+    }
+
+    pub fn tui_webdav_loading_title_v1_migration() -> &'static str {
+        if is_chinese() {
+            "V1 → V2 迁移"
+        } else {
+            "V1 → V2 Migration"
+        }
+    }
+
+    pub fn tui_toast_webdav_v1_migration_ok() -> &'static str {
+        if is_chinese() {
+            "V1 → V2 迁移完成，旧数据已清理。"
+        } else {
+            "V1 → V2 migration completed, old data cleaned up."
+        }
+    }
+
     pub fn tui_toast_webdav_jianguoyun_configured() -> &'static str {
         if is_chinese() {
             "坚果云一键配置完成，连接检查通过。"

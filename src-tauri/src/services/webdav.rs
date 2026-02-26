@@ -368,6 +368,30 @@ fn should_verify_after_mkcol(status: StatusCode) -> bool {
     )
 }
 
+/// DELETE a remote collection (directory). Returns Ok(true) if deleted,
+/// Ok(false) if 404/410 (already gone), Err on other failures.
+pub async fn delete_collection(url: &str, auth: &WebDavAuth) -> Result<bool, AppError> {
+    let client = build_client(30)?;
+    let req = apply_auth(client.request(Method::DELETE, url), auth);
+    let resp = req.send().await.map_err(|e| {
+        AppError::Message(format!(
+            "WebDAV DELETE {} failed: {e}",
+            redact_url(url)
+        ))
+    })?;
+    let status = resp.status();
+    match status {
+        s if s.is_success() => Ok(true),
+        StatusCode::NOT_FOUND | StatusCode::GONE => Ok(false),
+        _ => Err(webdav_status_error(
+            "DELETE",
+            url,
+            status,
+            &resp.text().await.unwrap_or_default(),
+        )),
+    }
+}
+
 pub async fn ensure_remote_directories(
     base_url: &str,
     segments: &[String],

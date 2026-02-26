@@ -86,6 +86,7 @@ pub enum ConfirmAction {
     SettingsSetSkipClaudeOnboarding { enabled: bool },
     EditorDiscard,
     EditorSaveBeforeClose,
+    WebDavMigrateV1ToV2,
 }
 
 #[derive(Debug, Clone)]
@@ -588,6 +589,7 @@ pub enum Action {
     ConfigWebDavCheckConnection,
     ConfigWebDavUpload,
     ConfigWebDavDownload,
+    ConfigWebDavMigrateV1ToV2,
     ConfigWebDavReset,
     ConfigWebDavJianguoyunQuickSetup {
         username: String,
@@ -1747,6 +1749,9 @@ impl App {
                             } else {
                                 Action::None
                             }
+                        }
+                        ConfirmAction::WebDavMigrateV1ToV2 => {
+                            Action::ConfigWebDavMigrateV1ToV2
                         }
                     };
                     self.overlay = Overlay::None;

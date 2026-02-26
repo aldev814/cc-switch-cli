@@ -27,7 +27,7 @@ use crate::settings::{
     WebDavSyncSettings,
 };
 
-use app::{Action, App, EditorSubmit, LoadingKind, Overlay, TextViewState, ToastKind};
+use app::{Action, App, ConfirmAction, ConfirmOverlay, EditorSubmit, LoadingKind, Overlay, TextViewState, ToastKind};
 use data::{load_state, UiData};
 use form::FormState;
 use terminal::{PanicRestoreHookGuard, TuiTerminal};
@@ -74,6 +74,7 @@ enum WebDavReqKind {
     CheckConnection,
     Upload,
     Download,
+    MigrateV1ToV2,
     JianguoyunQuickSetup { username: String, password: String },
 }
 
@@ -92,6 +93,9 @@ enum WebDavDone {
     },
     Downloaded {
         decision: SyncDecision,
+        message: String,
+    },
+    V1Migrated {
         message: String,
     },
     JianguoyunConfigured,
@@ -540,24 +544,52 @@ fn handle_webdav_msg(
                         app.push_toast(msg, ToastKind::Success);
                     }
                     WebDavDone::Downloaded { decision, message } => {
-                        let msg = match decision {
-                            SyncDecision::Download => {
-                                texts::tui_toast_webdav_download_ok().to_string()
+                        match decision {
+                            SyncDecision::V1MigrationNeeded => {
+                                // 弹出确认框，让用户决定是否迁移
+                                app.overlay = Overlay::Confirm(ConfirmOverlay {
+                                    title: texts::tui_webdav_v1_migration_title().to_string(),
+                                    message: texts::tui_webdav_v1_migration_message().to_string(),
+                                    action: ConfirmAction::WebDavMigrateV1ToV2,
+                                });
                             }
-                            _ => message,
-                        };
-                        // Post-download: 将数据库中的当前供应商配置同步到 live 文件，
-                        // 对齐上游 run_post_import_sync 行为。Best-effort，不阻塞 UI。
+                            _ => {
+                                let msg = match decision {
+                                    SyncDecision::Download => {
+                                        texts::tui_toast_webdav_download_ok().to_string()
+                                    }
+                                    _ => message,
+                                };
+                                // Post-download: 将数据库中的当前供应商配置同步到 live 文件，
+                                // 对齐上游 run_post_import_sync 行为。Best-effort，不阻塞 UI。
+                                if let Ok(state) = load_state() {
+                                    if let Err(e) =
+                                        crate::services::provider::ProviderService::sync_current_to_live(
+                                            &state,
+                                        )
+                                    {
+                                        log::warn!("WebDAV 下载后同步 live 配置失败: {e}");
+                                    }
+                                }
+                                app.push_toast(msg, ToastKind::Success);
+                            }
+                        }
+                    }
+                    WebDavDone::V1Migrated { message: _ } => {
+                        // 迁移完成后也需要同步 live 配置
                         if let Ok(state) = load_state() {
                             if let Err(e) =
                                 crate::services::provider::ProviderService::sync_current_to_live(
                                     &state,
                                 )
                             {
-                                log::warn!("WebDAV 下载后同步 live 配置失败: {e}");
+                                log::warn!("WebDAV V1 迁移后同步 live 配置失败: {e}");
                             }
                         }
-                        app.push_toast(msg, ToastKind::Success);
+                        app.push_toast(
+                            texts::tui_toast_webdav_v1_migration_ok(),
+                            ToastKind::Success,
+                        );
                     }
                     WebDavDone::JianguoyunConfigured => {
                         app.push_toast(
@@ -613,6 +645,17 @@ fn handle_webdav_msg(
                         };
                         texts::tui_toast_webdav_action_failed(
                             texts::tui_webdav_loading_title_download(),
+                            &detail,
+                        )
+                    }
+                    WebDavReqKind::MigrateV1ToV2 => {
+                        let detail = match err {
+                            WebDavErr::Generic(e)
+                            | WebDavErr::QuickSetupSave(e)
+                            | WebDavErr::QuickSetupCheck(e) => e,
+                        };
+                        texts::tui_toast_webdav_action_failed(
+                            texts::tui_webdav_loading_title_v1_migration(),
                             &detail,
                         )
                     }
@@ -1646,6 +1689,33 @@ fn handle_action(
             }
             Ok(())
         }
+        Action::ConfigWebDavMigrateV1ToV2 => {
+            let Some(tx) = webdav_req_tx else {
+                app.push_toast(
+                    texts::tui_toast_webdav_worker_disabled(),
+                    ToastKind::Warning,
+                );
+                return Ok(());
+            };
+            let request_id = webdav_loading.start();
+            app.overlay = Overlay::Loading {
+                kind: LoadingKind::WebDav,
+                title: texts::tui_webdav_loading_title_v1_migration().to_string(),
+                message: texts::tui_webdav_loading_message().to_string(),
+            };
+            if let Err(err) = tx.send(WebDavReq {
+                request_id,
+                kind: WebDavReqKind::MigrateV1ToV2,
+            }) {
+                webdav_loading.cancel();
+                app.overlay = Overlay::None;
+                app.push_toast(
+                    texts::tui_toast_webdav_request_failed(&err.to_string()),
+                    ToastKind::Error,
+                );
+            }
+            Ok(())
+        }
         Action::ConfigWebDavReset => {
             set_webdav_sync_settings(None)?;
             app.push_toast(
@@ -2024,6 +2094,11 @@ fn webdav_worker_loop(rx: mpsc::Receiver<WebDavReq>, tx: mpsc::Sender<WebDavMsg>
             WebDavReqKind::Download => WebDavSyncService::download()
                 .map(|summary| WebDavDone::Downloaded {
                     decision: summary.decision,
+                    message: summary.message,
+                })
+                .map_err(|e| WebDavErr::Generic(e.to_string())),
+            WebDavReqKind::MigrateV1ToV2 => WebDavSyncService::migrate_v1_to_v2()
+                .map(|summary| WebDavDone::V1Migrated {
                     message: summary.message,
                 })
                 .map_err(|e| WebDavErr::Generic(e.to_string())),
