@@ -57,11 +57,39 @@ pub fn prompt_settings_config_for_add(
     }
 }
 
+/// Generate a clean TOML key from a provider name/id for use in model_provider and [model_providers.<key>].
+fn clean_codex_provider_key(raw: &str) -> String {
+    let mut key: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    while key.starts_with('_') {
+        key.remove(0);
+    }
+    while key.ends_with('_') {
+        key.pop();
+    }
+
+    if key.is_empty() {
+        "custom".to_string()
+    } else {
+        key
+    }
+}
+
 fn build_codex_settings_config(
     api_key: Option<&str>,
     base_url: &str,
     model: &str,
     wire_api: &str,
+    provider_key: &str,
 ) -> Value {
     let model = if model.trim().is_empty() {
         "gpt-5.2-codex"
@@ -73,14 +101,21 @@ fn build_codex_settings_config(
     } else {
         base_url.trim()
     };
+    let provider_key = clean_codex_provider_key(provider_key);
 
+    // Align with upstream: use full config.toml format with [model_providers.<key>]
     let config_toml = [
-        format!("base_url = \"{}\"", base_url),
+        format!("model_provider = \"{}\"", provider_key),
         format!("model = \"{}\"", model),
         "model_reasoning_effort = \"high\"".to_string(),
         "disable_response_storage = true".to_string(),
+        String::new(),
+        format!("[model_providers.{}]", provider_key),
+        format!("name = \"{}\"", provider_key),
+        format!("base_url = \"{}\"", base_url),
         format!("wire_api = \"{}\"", wire_api),
         "requires_openai_auth = true".to_string(),
+        String::new(),
     ]
     .join("\n");
 
@@ -96,7 +131,7 @@ fn build_codex_settings_config(
 }
 
 fn build_codex_official_settings_config(model: &str, _wire_api: &str) -> Value {
-    build_codex_settings_config(None, CODEX_OFFICIAL_BASE_URL, model, "responses")
+    build_codex_settings_config(None, CODEX_OFFICIAL_BASE_URL, model, "responses", "openai")
 }
 
 /// 可选字段集合
@@ -521,6 +556,7 @@ fn prompt_codex_config(current: Option<&Value>) -> Result<Value, AppError> {
         &base_url,
         model.trim(),
         "responses",
+        "custom",
     ))
 }
 
@@ -594,6 +630,7 @@ fn prompt_codex_official_config(current: Option<&Value>) -> Result<Value, AppErr
         base_url.trim(),
         model.trim(),
         "responses",
+        "openai",
     ))
 }
 

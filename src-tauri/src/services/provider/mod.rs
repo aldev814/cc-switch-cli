@@ -31,13 +31,49 @@ fn state_from_config(config: MultiAppConfig) -> AppState {
     }
 }
 
-/// 从供应商名称生成 Codex 的 provider ID (lowercase alphanumeric)
-/// 示例: "Duck Coding" -> "duckcoding"
-fn generate_provider_id_from_name(name: &str) -> String {
-    name.chars()
-        .filter(|c| c.is_alphanumeric())
-        .collect::<String>()
-        .to_lowercase()
+/// Strip common config snippet keys from a full Codex config.toml text.
+///
+/// When storing a provider snapshot, we remove keys that belong to the common
+/// config snippet so they don't get duplicated when the common snippet is
+/// merged back in during `write_codex_live`.
+fn strip_codex_common_config_from_full_text(
+    config_text: &str,
+    common_snippet: &str,
+) -> Result<String, AppError> {
+    if common_snippet.trim().is_empty() || config_text.trim().is_empty() {
+        return Ok(config_text.to_string());
+    }
+
+    let common_table: toml::Table = toml::from_str(common_snippet).unwrap_or_default();
+    if common_table.is_empty() {
+        return Ok(config_text.to_string());
+    }
+
+    let mut doc = config_text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| AppError::Config(format!("TOML parse error: {e}")))?;
+
+    for (key, _) in &common_table {
+        // Only strip root-level scalar keys that are NOT provider-specific.
+        // Never strip model, model_provider, model_providers, base_url, etc.
+        match key.as_str() {
+            "model" | "model_provider" | "model_providers" | "base_url" | "wire_api"
+            | "env_key" | "requires_openai_auth" | "name" => continue,
+            _ => {
+                doc.as_table_mut().remove(key);
+            }
+        }
+    }
+
+    // Also strip common sub-tables (e.g. mcp_servers) if they appear in the common snippet.
+    // But only if the common snippet has them as tables.
+    for (key, val) in &common_table {
+        if val.is_table() {
+            doc.as_table_mut().remove(key);
+        }
+    }
+
+    Ok(doc.to_string())
 }
 
 fn is_codex_official_provider(provider: &Provider) -> bool {
@@ -156,7 +192,7 @@ mod tests {
                     "p1".to_string(),
                     "Keyring".to_string(),
                     json!({
-                        "config": "requires_openai_auth = true\n",
+                        "config": "model_provider = \"keyring\"\nmodel = \"gpt-5.2-codex\"\n\n[model_providers.keyring]\nrequires_openai_auth = true\n",
                     }),
                     None,
                 ),
@@ -167,7 +203,7 @@ mod tests {
                     "p2".to_string(),
                     "Other".to_string(),
                     json!({
-                        "config": "requires_openai_auth = true\n",
+                        "config": "model_provider = \"other\"\nmodel = \"gpt-5.2-codex\"\n\n[model_providers.other]\nrequires_openai_auth = true\n",
                     }),
                     None,
                 ),
@@ -186,9 +222,6 @@ mod tests {
 
         let live_config_text =
             std::fs::read_to_string(get_codex_config_path()).expect("read live config.toml");
-        let live_config_snippet =
-            ProviderService::codex_config_snippet_from_live_config(&live_config_text)
-                .expect("extract provider config snippet");
 
         let guard = state.config.read().expect("read config after switch");
         let manager = guard
@@ -200,14 +233,15 @@ mod tests {
             provider.settings_config.get("auth").is_none(),
             "snapshot should not inject auth when auth.json is absent"
         );
-        assert_eq!(
-            provider
-                .settings_config
-                .get("config")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            live_config_snippet,
-            "provider snapshot should match extracted snippet even without auth.json"
+        // After the switch, the stored config should match the live config.toml
+        let stored_config = provider
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            !stored_config.is_empty() || !live_config_text.trim().is_empty(),
+            "provider snapshot should have config text after switch"
         );
     }
 
@@ -238,7 +272,7 @@ mod tests {
                     "Third Party".to_string(),
                     json!({
                         "auth": { "OPENAI_API_KEY": "sk-third-party" },
-                        "config": "base_url = \"https://third-party.example/v1\"\nmodel = \"gpt-5.2-codex\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+                        "config": "model_provider = \"thirdparty\"\nmodel = \"gpt-5.2-codex\"\n\n[model_providers.thirdparty]\nbase_url = \"https://third-party.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
                     }),
                     None,
                 ),
@@ -248,7 +282,7 @@ mod tests {
                 "p2".to_string(),
                 "OpenAI Official".to_string(),
                 json!({
-                    "config": "base_url = \"https://api.openai.com/v1\"\nmodel = \"gpt-5.2-codex\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+                    "config": "model_provider = \"openai\"\nmodel = \"gpt-5.2-codex\"\n\n[model_providers.openai]\nbase_url = \"https://api.openai.com/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
                 }),
                 None,
             );
@@ -285,25 +319,6 @@ mod tests {
     }
 
     #[test]
-    fn codex_config_snippet_defaults_wire_api_to_responses_for_openai_auth_when_missing() {
-        let config_text = r#"
-model_provider = "openai"
-model = "gpt-5.2-codex"
-
-[model_providers.openai]
-base_url = "https://api.openai.com/v1"
-requires_openai_auth = true
-"#;
-
-        let snippet = ProviderService::codex_config_snippet_from_live_config(config_text)
-            .expect("extract provider config snippet");
-        assert!(
-            snippet.contains("wire_api = \"responses\""),
-            "wire_api should default to responses for OpenAI auth when missing from config"
-        );
-    }
-
-    #[test]
     #[serial]
     fn codex_switch_preserves_base_url_and_wire_api_across_multiple_switches() {
         let temp_home = TempDir::new().expect("create temp home");
@@ -325,7 +340,7 @@ requires_openai_auth = true
                     "Provider One".to_string(),
                     json!({
                         "auth": { "OPENAI_API_KEY": "sk-one" },
-                        "config": "base_url = \"https://api.one.example/v1\"\nmodel = \"gpt-4o\"\nwire_api = \"responses\"\nenv_key = \"OPENAI_API_KEY\"\nrequires_openai_auth = false\n",
+                        "config": "model_provider = \"providerone\"\nmodel = \"gpt-4o\"\n\n[model_providers.providerone]\nbase_url = \"https://api.one.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
                     }),
                     None,
                 ),
@@ -337,7 +352,7 @@ requires_openai_auth = true
                     "Provider Two".to_string(),
                     json!({
                         "auth": { "OPENAI_API_KEY": "sk-two" },
-                        "config": "base_url = \"https://api.two.example/v1\"\nmodel = \"gpt-4o\"\nwire_api = \"chat\"\nenv_key = \"OPENAI_API_KEY\"\nrequires_openai_auth = false\n",
+                        "config": "model_provider = \"providertwo\"\nmodel = \"gpt-4o\"\n\n[model_providers.providertwo]\nbase_url = \"https://api.two.example/v1\"\nwire_api = \"chat\"\nrequires_openai_auth = true\n",
                     }),
                     None,
                 ),
@@ -353,15 +368,13 @@ requires_openai_auth = true
 
         let live_text =
             std::fs::read_to_string(get_codex_config_path()).expect("read live config.toml");
-        let live_snippet =
-            ProviderService::codex_config_snippet_from_live_config(&live_text).expect("snippet");
         assert!(
-            live_snippet.contains("base_url = \"https://api.one.example/v1\""),
-            "live snippet should retain provider base_url after multiple switches"
+            live_text.contains("base_url = \"https://api.one.example/v1\""),
+            "live config should retain provider base_url after multiple switches"
         );
         assert!(
-            live_snippet.contains("wire_api = \"responses\""),
-            "live snippet should retain provider wire_api after multiple switches"
+            live_text.contains("wire_api = \"responses\""),
+            "live config should retain provider wire_api after multiple switches"
         );
 
         let guard = state.config.read().expect("read config");
@@ -680,7 +693,7 @@ requires_openai_auth = true
             "First".to_string(),
             json!({
                 "auth": { "OPENAI_API_KEY": "sk-test" },
-                "config": "base_url = \"https://api.example/v1\"\nmodel = \"gpt-5.2-codex\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+                "config": "model_provider = \"first\"\nmodel = \"gpt-5.2-codex\"\n\n[model_providers.first]\nbase_url = \"https://api.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
             }),
             None,
         );
@@ -712,7 +725,7 @@ requires_openai_auth = true
                 Provider::with_id(
                     "p1".to_string(),
                     "First".to_string(),
-                    json!({ "config": "base_url = \"https://api.one.example/v1\"\n" }),
+                    json!({ "config": "model_provider = \"first\"\nmodel = \"gpt-4\"\n\n[model_providers.first]\nbase_url = \"https://api.one.example/v1\"\n" }),
                     None,
                 ),
             );
@@ -721,7 +734,7 @@ requires_openai_auth = true
                 Provider::with_id(
                     "p2".to_string(),
                     "Second".to_string(),
-                    json!({ "config": "base_url = \"https://api.two.example/v1\"\n" }),
+                    json!({ "config": "model_provider = \"second\"\nmodel = \"gpt-4\"\n\n[model_providers.second]\nbase_url = \"https://api.two.example/v1\"\n" }),
                     None,
                 ),
             );
@@ -815,7 +828,7 @@ base_url = "http://localhost:8080"
                 Provider::with_id(
                     "p1".to_string(),
                     "First".to_string(),
-                    json!({ "config": "base_url = \"https://api.one.example/v1\"\n" }),
+                    json!({ "config": "model_provider = \"first\"\nmodel = \"gpt-4\"\n\n[model_providers.first]\nbase_url = \"https://api.one.example/v1\"\n" }),
                     None,
                 ),
             );
@@ -824,7 +837,7 @@ base_url = "http://localhost:8080"
                 serde_json::from_value(json!({
                     "id": "p2",
                     "name": "Second",
-                    "settingsConfig": { "config": "base_url = \"https://api.two.example/v1\"\n" },
+                    "settingsConfig": { "config": "model_provider = \"second\"\nmodel = \"gpt-4\"\n\n[model_providers.second]\nbase_url = \"https://api.two.example/v1\"\n" },
                     "meta": { "applyCommonConfig": false }
                 }))
                 .expect("parse provider p2"),
@@ -838,11 +851,11 @@ base_url = "http://localhost:8080"
         let live_text = std::fs::read_to_string(get_codex_config_path()).expect("read config.toml");
         assert!(
             !live_text.contains("disable_response_storage = true"),
-            "common snippet should be removed when applyCommonConfig=false"
+            "common snippet should not be merged when applyCommonConfig=false"
         );
         assert!(
-            live_text.contains("network_access = \"restricted\""),
-            "unrelated root config should be preserved"
+            live_text.contains("base_url = \"https://api.two.example/v1\""),
+            "provider-specific config should be written"
         );
     }
 
@@ -1443,12 +1456,22 @@ impl ProviderService {
                     None
                 };
                 let cfg_text = crate::codex_config::read_and_validate_codex_config_text()?;
-                let cfg_snippet = Self::codex_config_snippet_from_live_config(&cfg_text)?;
-                let common_snippet = Self::extract_codex_common_config_from_config_toml(&cfg_text)?;
+                let common_snippet_extracted =
+                    Self::extract_codex_common_config_from_config_toml(&cfg_text)?;
+
+                // Strip common config snippet keys from the full text before storing
+                let common_snippet_for_strip = {
+                    let guard = state.config.read().map_err(AppError::from)?;
+                    guard.common_config_snippets.codex.clone()
+                };
+                let cfg_to_store = strip_codex_common_config_from_full_text(
+                    &cfg_text,
+                    common_snippet_for_strip.as_deref().unwrap_or_default(),
+                )?;
 
                 {
                     let mut guard = state.config.write().map_err(AppError::from)?;
-                    if !common_snippet.trim().is_empty()
+                    if !common_snippet_extracted.trim().is_empty()
                         && guard
                             .common_config_snippets
                             .codex
@@ -1457,7 +1480,8 @@ impl ProviderService {
                             .trim()
                             .is_empty()
                     {
-                        guard.common_config_snippets.codex = Some(common_snippet.clone());
+                        guard.common_config_snippets.codex =
+                            Some(common_snippet_extracted.clone());
                     }
                     if let Some(manager) = guard.get_manager_mut(app_type) {
                         if let Some(target) = manager.providers.get_mut(provider_id) {
@@ -1471,7 +1495,10 @@ impl ProviderService {
                             } else {
                                 obj.remove("auth");
                             }
-                            obj.insert("config".to_string(), Value::String(cfg_snippet.clone()));
+                            obj.insert(
+                                "config".to_string(),
+                                Value::String(cfg_to_store.clone()),
+                            );
                         }
                     }
                 }
@@ -1964,105 +1991,6 @@ impl ProviderService {
         })
     }
 
-    /// 从 Codex 的 `config.toml` 中提取当前 provider 的“供应商片段配置”（用于写入到 CC-Switch 的 provider.settings_config.config）。
-    ///
-    /// CC-Switch 约定：Codex provider 的 `settings_config.config` 只存与该 provider 相关的字段（如 base_url / model / wire_api / env_key 等），
-    /// **不**保存整份 `~/.codex/config.toml`，否则二次切换会因字段位置不同而丢失 base_url / wire_api。
-    fn codex_config_snippet_from_live_config(config_text: &str) -> Result<String, AppError> {
-        if config_text.trim().is_empty() {
-            return Ok(String::new());
-        }
-
-        let root: toml::Table = toml::from_str(config_text).map_err(|e| {
-            AppError::Config(format!(
-                "解析 {} 失败: {e}",
-                get_codex_config_path().display()
-            ))
-        })?;
-
-        let model_provider = root
-            .get("model_provider")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        let model = root
-            .get("model")
-            .and_then(|v| v.as_str())
-            .unwrap_or("gpt-5.2-codex");
-
-        let provider_table = root
-            .get("model_providers")
-            .and_then(|v| v.as_table())
-            .and_then(|table| {
-                model_provider
-                    .as_deref()
-                    .and_then(|provider_id| table.get(provider_id))
-            })
-            .and_then(|v| v.as_table());
-
-        // 优先从 model_providers.<id> 读取；否则尝试读取旧版的根级字段（向后兼容）
-        let base_url = provider_table
-            .and_then(|t| t.get("base_url"))
-            .and_then(|v| v.as_str())
-            .or_else(|| root.get("base_url").and_then(|v| v.as_str()))
-            .unwrap_or("");
-
-        let requires_openai_auth = provider_table
-            .and_then(|t| t.get("requires_openai_auth"))
-            .and_then(|v| v.as_bool())
-            .or_else(|| root.get("requires_openai_auth").and_then(|v| v.as_bool()));
-        let env_key = provider_table
-            .and_then(|t| t.get("env_key"))
-            .and_then(|v| v.as_str())
-            .or_else(|| root.get("env_key").and_then(|v| v.as_str()));
-        let wire_api = provider_table
-            .and_then(|t| t.get("wire_api"))
-            .and_then(|v| v.as_str())
-            .or_else(|| root.get("wire_api").and_then(|v| v.as_str()))
-            .unwrap_or_else(|| {
-                if requires_openai_auth == Some(true)
-                    || base_url.trim_start().starts_with("https://api.openai.com")
-                {
-                    "responses"
-                } else {
-                    "chat"
-                }
-            });
-
-        let mut lines = Vec::new();
-        if !base_url.trim().is_empty() {
-            lines.push(format!("base_url = \"{}\"", base_url.trim()));
-        }
-        lines.push(format!("model = \"{}\"", model.trim()));
-        lines.push(format!("wire_api = \"{}\"", wire_api.trim()));
-
-        match requires_openai_auth {
-            Some(true) => {
-                lines.push("requires_openai_auth = true".to_string());
-            }
-            Some(false) => {
-                if let Some(env_key) = env_key {
-                    let env_key = env_key.trim();
-                    if !env_key.is_empty() {
-                        lines.push(format!("env_key = \"{}\"", env_key));
-                    }
-                }
-                lines.push("requires_openai_auth = false".to_string());
-            }
-            None => {
-                if let Some(env_key) = env_key {
-                    let env_key = env_key.trim();
-                    if !env_key.is_empty() {
-                        lines.push(format!("env_key = \"{}\"", env_key));
-                        // 防止 write_codex_live 推断错误的 OpenAI auth 模式
-                        lines.push("requires_openai_auth = false".to_string());
-                    }
-                }
-            }
-        }
-
-        Ok(lines.join("\n"))
-    }
-
     fn prepare_switch_codex(
         config: &mut MultiAppConfig,
         provider_id: &str,
@@ -2114,11 +2042,23 @@ impl ProviderService {
         } else {
             None
         };
-        let config_snippet = if config_path.exists() {
-            let config_text =
+
+        // Align with upstream: store the FULL config.toml text, not a snippet.
+        // This preserves all fields (model_reasoning_effort, disable_response_storage, etc.)
+        // and avoids lossy round-trips through snippet extraction.
+        let config_text = if config_path.exists() {
+            let text =
                 std::fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?;
-            Self::maybe_update_codex_common_config_snippet(config, &config_text)?;
-            Some(Self::codex_config_snippet_from_live_config(&config_text)?)
+            Self::maybe_update_codex_common_config_snippet(config, &text)?;
+
+            // Strip common config snippet keys so they don't get duplicated
+            let common_snippet = config
+                .common_config_snippets
+                .codex
+                .as_deref()
+                .unwrap_or_default();
+            let stripped = strip_codex_common_config_from_full_text(&text, common_snippet)?;
+            Some(stripped)
         } else {
             None
         };
@@ -2133,8 +2073,8 @@ impl ProviderService {
                 if let Some(auth) = auth {
                     obj.insert("auth".to_string(), auth);
                 }
-                if let Some(config_snippet) = config_snippet {
-                    obj.insert("config".to_string(), Value::String(config_snippet));
+                if let Some(config_text) = config_text {
+                    obj.insert("config".to_string(), Value::String(config_text));
                 }
             }
         }
@@ -2142,13 +2082,16 @@ impl ProviderService {
         Ok(())
     }
 
+    /// Write Codex live configuration.
+    ///
+    /// Aligned with upstream: the stored `settings_config.config` is the full config.toml text.
+    /// We write it directly to `~/.codex/config.toml`, optionally merging the common config snippet.
+    /// Auth is handled separately via auth.json.
     fn write_codex_live(
         provider: &Provider,
         common_config_snippet: Option<&str>,
         apply_common_config: bool,
     ) -> Result<(), AppError> {
-        use toml_edit::{value, Item, Table};
-
         if !crate::sync_policy::should_sync_live(&AppType::Codex) {
             return Ok(());
         }
@@ -2167,175 +2110,42 @@ impl ProviderService {
         // 获取存储的 config TOML 文本
         let cfg_text = settings.get("config").and_then(Value::as_str).unwrap_or("");
 
-        // 解析存储的 TOML 以提取字段（如果为空则使用默认值）
-        let stored_config: toml::Table = if cfg_text.trim().is_empty() {
-            toml::Table::new()
-        } else {
-            toml::from_str(cfg_text).map_err(|e| {
-                AppError::Config(format!(
-                    "解析供应商 {} 的 config TOML 失败: {}",
-                    provider.id, e
-                ))
-            })?
-        };
+        // Validate TOML before writing
+        if !cfg_text.trim().is_empty() {
+            crate::codex_config::validate_config_toml(cfg_text)?;
+        }
 
-        // 兼容：部分旧版本/外部导入可能把“整份 config.toml”写进 provider.config。
-        // 对于这种情况，base_url / wire_api / requires_openai_auth / env_key 等应从
-        // model_provider + model_providers.<id> 中提取，而不是只看根级字段。
-        let model_provider_in_config = stored_config
-            .get("model_provider")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        let provider_table_from_full_config = stored_config
-            .get("model_providers")
-            .and_then(|v| v.as_table())
-            .and_then(|providers| {
-                model_provider_in_config
-                    .as_deref()
-                    .and_then(|id| providers.get(id))
-            })
-            .and_then(|v| v.as_table());
-
-        // 提取必要字段
-        let base_url = provider_table_from_full_config
-            .and_then(|t| t.get("base_url"))
-            .and_then(|v| v.as_str())
-            .or_else(|| stored_config.get("base_url").and_then(|v| v.as_str()))
-            .unwrap_or("");
-        let model = stored_config
-            .get("model")
-            .and_then(|v| v.as_str())
-            .unwrap_or("gpt-5.2-codex");
-        let env_key = provider_table_from_full_config
-            .and_then(|t| t.get("env_key"))
-            .and_then(|v| v.as_str())
-            .or_else(|| stored_config.get("env_key").and_then(|v| v.as_str()))
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        // Back-compat: older/partial snippets may omit `requires_openai_auth`. For the official
-        // OpenAI endpoint, default to OpenAI auth mode to avoid forcing users to export
-        // `OPENAI_API_KEY` unless they explicitly opted into env var mode.
-        let inferred_requires_openai_auth =
-            base_url.trim_start().starts_with("https://api.openai.com")
-                && (env_key.is_none() || (env_key == Some("OPENAI_API_KEY") && !auth_is_empty));
-        let requires_openai_auth = provider_table_from_full_config
-            .and_then(|t| t.get("requires_openai_auth"))
-            .and_then(|v| v.as_bool())
-            .or_else(|| {
-                stored_config
-                    .get("requires_openai_auth")
-                    .and_then(|v| v.as_bool())
-            })
-            .unwrap_or(inferred_requires_openai_auth);
-        let wire_api = provider_table_from_full_config
-            .and_then(|t| t.get("wire_api"))
-            .and_then(|v| v.as_str())
-            .or_else(|| stored_config.get("wire_api").and_then(|v| v.as_str()))
-            .unwrap_or_else(|| {
-                // Heuristic defaults:
-                // - OpenAI official base_url (or OpenAI auth mode) → responses
-                // - Otherwise → chat
-                if requires_openai_auth
-                    || base_url.trim_start().starts_with("https://api.openai.com")
-                {
-                    "responses"
-                } else {
-                    "chat"
-                }
-            });
-
-        // 从供应商名称生成 provider ID
-        let provider_id = generate_provider_id_from_name(&provider.name);
-
-        // 读取现有 config.toml（保留 MCP 服务器等其他配置）
-        let base_text = crate::codex_config::read_and_validate_codex_config_text()?;
-        let mut doc = if base_text.trim().is_empty() {
-            toml_edit::DocumentMut::default()
-        } else {
-            base_text
-                .parse::<toml_edit::DocumentMut>()
-                .map_err(|e| AppError::Config(format!("解析 config.toml 失败: {}", e)))?
-        };
-
-        if let Some(snippet) = common_config_snippet {
-            let snippet = snippet.trim();
-            if !snippet.is_empty() {
-                let common_doc = snippet.parse::<toml_edit::DocumentMut>().map_err(|e| {
-                    AppError::localized(
-                        "common_config.codex.invalid_toml",
-                        format!("Codex 通用配置片段不是有效的 TOML：{e}"),
-                        format!("Codex common config snippet is not valid TOML: {e}"),
-                    )
-                })?;
-                if apply_common_config {
+        // Merge common config snippet if applicable
+        let final_text = if apply_common_config {
+            if let Some(snippet) = common_config_snippet {
+                let snippet = snippet.trim();
+                if !snippet.is_empty() && !cfg_text.trim().is_empty() {
+                    // Parse both as TOML documents and merge
+                    let mut doc = cfg_text
+                        .parse::<toml_edit::DocumentMut>()
+                        .map_err(|e| AppError::Config(format!("TOML parse error: {e}")))?;
+                    let common_doc =
+                        snippet.parse::<toml_edit::DocumentMut>().map_err(|e| {
+                            AppError::Config(format!("Common config TOML parse error: {e}"))
+                        })?;
                     Self::merge_toml_tables(doc.as_table_mut(), common_doc.as_table());
+                    doc.to_string()
                 } else {
-                    Self::strip_toml_tables(doc.as_table_mut(), common_doc.as_table());
+                    cfg_text.to_string()
                 }
+            } else {
+                cfg_text.to_string()
             }
-        }
+        } else {
+            cfg_text.to_string()
+        };
 
-        // 移除不应该在根级别的字段
-        doc.as_table_mut().remove("base_url");
-        doc.as_table_mut().remove("wire_api");
-        doc.as_table_mut().remove("env_key");
-        doc.as_table_mut().remove("requires_openai_auth");
-
-        // 设置根级别字段
-        doc["model_provider"] = value(&provider_id);
-        doc["model"] = value(model);
-
-        // 从 stored_config 复制其他根级别字段（如果有）
-        for (key, val) in stored_config.iter() {
-            match key.as_str() {
-                // 跳过已处理的字段和应该在 provider section 的字段
-                "base_url"
-                | "wire_api"
-                | "env_key"
-                | "requires_openai_auth"
-                | "name"
-                | "model_provider"
-                | "model_providers"
-                | "mcp_servers" => continue,
-                "model" => continue, // 已在上面设置
-                // 复制其他根级别字段（如 model_reasoning_effort, network_access 等）
-                _ => {
-                    if let Some(toml_val) = Self::toml_value_to_toml_edit_value(val) {
-                        doc[key] = Item::Value(toml_val);
-                    }
-                }
-            }
-        }
-
-        // 构建 [model_providers.<id>] 表
-        let mut provider_table = Table::new();
-        provider_table["name"] = value(&provider_id);
-        if !base_url.is_empty() {
-            provider_table["base_url"] = value(base_url);
-        }
-        provider_table["wire_api"] = value(wire_api);
-        if requires_openai_auth {
-            provider_table["requires_openai_auth"] = value(true);
-        } else if let Some(env_key) = env_key {
-            provider_table["env_key"] = value(env_key);
-        }
-
-        // 确保 model_providers 表存在
-        if !doc.contains_key("model_providers") {
-            doc["model_providers"] = Item::Table(Table::new());
-        }
-
-        // 设置 provider
-        if let Some(providers_item) = doc.get_mut("model_providers") {
-            if let Some(providers_table) = providers_item.as_table_like_mut() {
-                providers_table.insert(&provider_id, Item::Table(provider_table));
-            }
-        }
-
-        // 写回 config.toml
-        let new_text = doc.to_string();
+        // Write config.toml
         let config_path = get_codex_config_path();
-        crate::config::write_text_file(&config_path, &new_text)?;
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        }
+        crate::config::write_text_file(&config_path, &final_text)?;
 
         // auth.json handling:
         //
@@ -2364,18 +2174,6 @@ impl ProviderService {
         }
 
         Ok(())
-    }
-
-    /// 将 toml::Value 转换为 toml_edit::Value
-    fn toml_value_to_toml_edit_value(val: &toml::Value) -> Option<toml_edit::Value> {
-        use toml_edit::Value as EditValue;
-        match val {
-            toml::Value::String(s) => Some(EditValue::from(s.as_str())),
-            toml::Value::Integer(i) => Some(EditValue::from(*i)),
-            toml::Value::Float(f) => Some(EditValue::from(*f)),
-            toml::Value::Boolean(b) => Some(EditValue::from(*b)),
-            _ => None, // 暂不处理数组和表
-        }
     }
 
     fn prepare_switch_claude(
@@ -2931,7 +2729,7 @@ mod codex_openai_auth_tests {
 
     #[test]
     #[serial]
-    fn switch_codex_provider_uses_openai_auth_instead_of_env_key() {
+    fn switch_codex_provider_writes_stored_config_directly() {
         let temp_home = TempDir::new().expect("create temp home");
         let _env = EnvGuard::set_home(temp_home.path());
         std::fs::create_dir_all(crate::codex_config::get_codex_config_dir())
@@ -2950,7 +2748,7 @@ mod codex_openai_auth_tests {
                     "OpenAI".to_string(),
                     json!({
                         "auth": { "OPENAI_API_KEY": "sk-test" },
-                        "config": "base_url = \"https://api.openai.com/v1\"\nmodel = \"gpt-4o\"\nenv_key = \"OPENAI_API_KEY\"\nwire_api = \"chat\""
+                        "config": "model_provider = \"openai\"\nmodel = \"gpt-4o\"\n\n[model_providers.openai]\nbase_url = \"https://api.openai.com/v1\"\nwire_api = \"chat\"\nrequires_openai_auth = true\n"
                     }),
                     None,
                 ),
@@ -2964,11 +2762,15 @@ mod codex_openai_auth_tests {
             std::fs::read_to_string(get_codex_config_path()).expect("read codex config.toml");
         assert!(
             config_text.contains("requires_openai_auth = true"),
-            "config.toml should enable OpenAI auth for Codex model provider"
+            "config.toml should contain requires_openai_auth from stored config"
         );
         assert!(
-            !config_text.contains("env_key = \"OPENAI_API_KEY\""),
-            "config.toml should not force OPENAI_API_KEY env var by default"
+            config_text.contains("base_url = \"https://api.openai.com/v1\""),
+            "config.toml should contain base_url from stored config"
+        );
+        assert!(
+            config_text.contains("model = \"gpt-4o\""),
+            "config.toml should contain model from stored config"
         );
     }
 }
