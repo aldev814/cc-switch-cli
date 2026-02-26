@@ -47,7 +47,7 @@ pub use services::{
 };
 pub use settings::{
     get_skip_claude_onboarding, get_webdav_sync_settings, set_skip_claude_onboarding,
-    set_webdav_sync_settings, update_settings, webdav_jianguoyun_preset, AppSettings,
-    WebDavSyncSettings, WebDavSyncStatus,
+    set_webdav_sync_settings, update_settings, update_webdav_sync_status,
+    webdav_jianguoyun_preset, AppSettings, WebDavSyncSettings, WebDavSyncStatus,
 };
 pub use store::AppState;

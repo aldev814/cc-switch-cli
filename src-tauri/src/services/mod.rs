@@ -7,6 +7,7 @@ pub mod prompt;
 pub mod provider;
 pub mod skill;
 pub mod speedtest;
+pub mod webdav;
 pub mod webdav_sync;
 
 pub use config::ConfigService;

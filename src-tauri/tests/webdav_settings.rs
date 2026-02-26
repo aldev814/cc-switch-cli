@@ -15,8 +15,7 @@ fn sample_settings() -> WebDavSyncSettings {
         profile: " default ".to_string(),
         username: "user@example.com".to_string(),
         password: "app-password".to_string(),
-        device_id: "device-a".to_string(),
-        timeout_secs: 20,
+        auto_sync: false,
         status: WebDavSyncStatus::default(),
     }
 }
@@ -55,7 +54,6 @@ fn set_webdav_sync_settings_persists_and_normalizes_fields() {
     );
     assert_eq!(saved.remote_root, "cc-switch-sync");
     assert_eq!(saved.profile, "default");
-    assert_eq!(saved.timeout_secs, 20);
 }
 
 #[test]
@@ -94,8 +92,4 @@ fn jianguoyun_preset_sets_expected_defaults() {
     assert_eq!(preset.profile, "default");
     assert_eq!(preset.username, "demo@nutstore.com");
     assert_eq!(preset.password, "app-password");
-    assert!(
-        !preset.device_id.trim().is_empty(),
-        "preset should include non-empty device id"
-    );
 }

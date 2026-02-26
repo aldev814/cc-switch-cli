@@ -16,10 +16,15 @@ use tempfile::NamedTempFile;
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
 
 impl Database {
-    /// 导出为 SQLite 兼容的 SQL 文本
-    pub fn export_sql(&self, target_path: &Path) -> Result<(), AppError> {
+    /// 导出为 SQL 字符串（内存操作，不写文件）
+    pub fn export_sql_string(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
-        let dump = Self::dump_sql(&snapshot)?;
+        Self::dump_sql(&snapshot)
+    }
+
+    /// 导出为 SQLite 兼容的 SQL 文本文件
+    pub fn export_sql(&self, target_path: &Path) -> Result<(), AppError> {
+        let dump = self.export_sql_string()?;
 
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -28,16 +33,8 @@ impl Database {
         crate::config::atomic_write(target_path, dump.as_bytes())
     }
 
-    /// 从 SQL 文件导入，返回生成的备份 ID（若无备份则为空字符串）
-    pub fn import_sql(&self, source_path: &Path) -> Result<String, AppError> {
-        if !source_path.exists() {
-            return Err(AppError::InvalidInput(format!(
-                "SQL 文件不存在: {}",
-                source_path.display()
-            )));
-        }
-
-        let sql_raw = fs::read_to_string(source_path).map_err(|e| AppError::io(source_path, e))?;
+    /// 从 SQL 字符串导入，返回生成的备份 ID（若无备份则为空字符串）
+    pub fn import_sql_string(&self, sql_raw: &str) -> Result<String, AppError> {
         let sql_content = sql_raw.trim_start_matches('\u{feff}');
         Self::validate_cc_switch_sql_export(sql_content)?;
 
@@ -77,6 +74,19 @@ impl Database {
             .unwrap_or_default();
 
         Ok(backup_id)
+    }
+
+    /// 从 SQL 文件导入，返回生成的备份 ID（若无备份则为空字符串）
+    pub fn import_sql(&self, source_path: &Path) -> Result<String, AppError> {
+        if !source_path.exists() {
+            return Err(AppError::InvalidInput(format!(
+                "SQL 文件不存在: {}",
+                source_path.display()
+            )));
+        }
+
+        let sql_raw = fs::read_to_string(source_path).map_err(|e| AppError::io(source_path, e))?;
+        self.import_sql_string(&sql_raw)
     }
 
     /// 创建内存快照以避免长时间持有数据库锁

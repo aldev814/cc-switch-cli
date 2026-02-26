@@ -39,6 +39,8 @@ pub struct WebDavSyncStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_remote_etag: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_local_manifest_hash: Option<String>,
@@ -62,9 +64,7 @@ pub struct WebDavSyncSettings {
     #[serde(default)]
     pub password: String,
     #[serde(default)]
-    pub device_id: String,
-    #[serde(default = "default_webdav_timeout_secs")]
-    pub timeout_secs: u64,
+    pub auto_sync: bool,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -75,10 +75,6 @@ fn default_webdav_remote_root() -> String {
 
 fn default_webdav_profile() -> String {
     "default".to_string()
-}
-
-fn default_webdav_timeout_secs() -> u64 {
-    20
 }
 
 const JIANGUOYUN_WEBDAV_BASE_URL: &str = "https://dav.jianguoyun.com/dav";
@@ -92,8 +88,7 @@ impl Default for WebDavSyncSettings {
             profile: default_webdav_profile(),
             username: String::new(),
             password: String::new(),
-            device_id: format!("device-{}", chrono::Utc::now().timestamp()),
-            timeout_secs: default_webdav_timeout_secs(),
+            auto_sync: false,
             status: WebDavSyncStatus::default(),
         }
     }
@@ -120,14 +115,6 @@ impl WebDavSyncSettings {
         self.profile = sanitize_path_segment(&self.profile);
         self.username = self.username.trim().to_string();
         self.password = self.password.trim().to_string();
-        if self.timeout_secs == 0 {
-            self.timeout_secs = default_webdav_timeout_secs();
-        }
-        if self.device_id.trim().is_empty() {
-            self.device_id = format!("device-{}", chrono::Utc::now().timestamp());
-        } else {
-            self.device_id = self.device_id.trim().to_string();
-        }
     }
 
     pub fn validate(&self) -> Result<(), AppError> {
@@ -432,6 +419,14 @@ pub fn set_webdav_sync_settings(webdav_sync: Option<WebDavSyncSettings>) -> Resu
         }
         None => None,
     };
+    update_settings(settings)
+}
+
+pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
+    let mut settings = get_settings();
+    if let Some(ref mut webdav) = settings.webdav_sync {
+        webdav.status = status;
+    }
     update_settings(settings)
 }
 
