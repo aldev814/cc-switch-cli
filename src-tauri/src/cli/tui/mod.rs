@@ -29,7 +29,7 @@ use crate::settings::{
 
 use app::{Action, App, ConfirmAction, ConfirmOverlay, EditorSubmit, LoadingKind, Overlay, TextViewState, ToastKind};
 use data::{load_state, UiData};
-use form::FormState;
+use form::{FormState, ProviderAddField};
 use terminal::{PanicRestoreHookGuard, TuiTerminal};
 
 fn command_lookup_name(raw: &str) -> Option<&str> {
@@ -163,6 +163,29 @@ struct UpdateSystem {
     _handle: std::thread::JoinHandle<()>,
 }
 
+pub enum ModelFetchReq {
+    Fetch {
+        base_url: String,
+        api_key: Option<String>,
+        field: ProviderAddField,
+        claude_idx: Option<usize>,
+    },
+}
+
+pub enum ModelFetchMsg {
+    Finished {
+        field: ProviderAddField,
+        claude_idx: Option<usize>,
+        result: Result<Vec<String>, String>,
+    },
+}
+
+struct ModelFetchSystem {
+    req_tx: mpsc::Sender<ModelFetchReq>,
+    result_rx: mpsc::Receiver<ModelFetchMsg>,
+    _handle: std::thread::JoinHandle<()>,
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 struct RequestTracker {
     seq: u64,
@@ -270,6 +293,17 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
         }
     };
 
+    let model_fetch = match start_model_fetch_system() {
+        Ok(system) => Some(system),
+        Err(err) => {
+            app.push_toast(
+                format!("Failed to start model fetch worker: {}", err),
+                ToastKind::Warning,
+            );
+            None
+        }
+    };
+
     loop {
         app.last_size = terminal.size()?;
         terminal.draw(|f| ui::render(f, &app, &data))?;
@@ -313,6 +347,13 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
             }
         }
 
+        // Handle async model fetch results
+        if let Some(mf) = model_fetch.as_ref() {
+            while let Ok(msg) = mf.result_rx.try_recv() {
+                handle_model_fetch_msg(&mut app, msg);
+            }
+        }
+
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout).map_err(|e| AppError::Message(e.to_string()))? {
             match event::read().map_err(|e| AppError::Message(e.to_string()))? {
@@ -330,6 +371,7 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
                         &mut webdav_loading,
                         update_system.as_ref().map(|s| &s.req_tx),
                         &mut update_check,
+                        model_fetch.as_ref().map(|s| &s.req_tx),
                         action,
                     ) {
                         if matches!(
@@ -361,6 +403,7 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
                             &mut webdav_loading,
                             update_system.as_ref().map(|s| &s.req_tx),
                             &mut update_check,
+                            model_fetch.as_ref().map(|s| &s.req_tx),
                             action,
                         ) {
                             if matches!(
@@ -444,6 +487,39 @@ fn handle_local_env_msg(app: &mut App, msg: LocalEnvMsg) {
         LocalEnvMsg::Finished { result } => {
             app.local_env_results = result;
             app.local_env_loading = false;
+        }
+    }
+}
+
+fn handle_model_fetch_msg(app: &mut App, msg: ModelFetchMsg) {
+    match msg {
+        ModelFetchMsg::Finished { field, claude_idx, result } => {
+            if let Overlay::ModelFetchPicker {
+                fetching: ref mut f,
+                models: ref mut m,
+                error: ref mut e,
+                field: ref current_field,
+                claude_idx: ref current_claude_idx,
+                ..
+            } = app.overlay
+            {
+                if current_field == &field && current_claude_idx == &claude_idx {
+                    *f = false;
+                    match result {
+                        Ok(fetched_models) => {
+                            if fetched_models.is_empty() {
+                                *e = Some(texts::tui_model_fetch_no_models().to_string());
+                            } else {
+                                *m = fetched_models;
+                                *e = None;
+                            }
+                        }
+                        Err(err) => {
+                            *e = Some(texts::tui_model_fetch_error_hint(&err));
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -690,6 +766,7 @@ fn handle_action(
     webdav_loading: &mut RequestTracker,
     update_req_tx: Option<&mpsc::Sender<UpdateReq>>,
     update_check: &mut RequestTracker,
+    model_fetch_req_tx: Option<&mpsc::Sender<ModelFetchReq>>,
     action: Action,
 ) -> Result<(), AppError> {
     match action {
@@ -1337,7 +1414,31 @@ fn handle_action(
             }
             Ok(())
         }
+        Action::ProviderModelFetch { base_url, api_key, field, claude_idx } => {
+            let Some(tx) = model_fetch_req_tx else {
+                app.push_toast("Model fetch system disabled".to_string(), ToastKind::Warning);
+                return Ok(());
+            };
 
+            app.overlay = Overlay::ModelFetchPicker {
+                field: field.clone(),
+                claude_idx,
+                input: String::new(),
+                query: String::new(),
+                fetching: true,
+                models: Vec::new(),
+                error: None,
+                selected_idx: 0,
+            };
+
+            if let Err(err) = tx.send(ModelFetchReq::Fetch { base_url, api_key, field, claude_idx }) {
+                if let Overlay::ModelFetchPicker { fetching, error, .. } = &mut app.overlay {
+                    *fetching = false;
+                    *error = Some(err.to_string());
+                }
+            }
+            Ok(())
+        }
         Action::McpToggle { id, enabled } => {
             let state = load_state()?;
             McpService::toggle_app(&state, &id, app.app_type.clone(), enabled)?;
@@ -2171,6 +2272,57 @@ fn speedtest_worker_loop(rx: mpsc::Receiver<String>, tx: mpsc::Sender<SpeedtestM
             .map_err(|e| e.to_string());
 
         let _ = tx.send(SpeedtestMsg::Finished { url, result });
+    }
+}
+
+fn start_model_fetch_system() -> Result<ModelFetchSystem, AppError> {
+    let (result_tx, result_rx) = mpsc::channel::<ModelFetchMsg>();
+    let (req_tx, req_rx) = mpsc::channel::<ModelFetchReq>();
+
+    let handle = std::thread::Builder::new()
+        .name("cc-switch-modelfetch".to_string())
+        .spawn(move || model_fetch_worker_loop(req_rx, result_tx))
+        .map_err(|e| AppError::IoContext {
+            context: "failed to spawn model fetch worker thread".to_string(),
+            source: e,
+        })?;
+
+    Ok(ModelFetchSystem {
+        req_tx,
+        result_rx,
+        _handle: handle,
+    })
+}
+
+fn model_fetch_worker_loop(rx: mpsc::Receiver<ModelFetchReq>, tx: mpsc::Sender<ModelFetchMsg>) {
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            let err = e.to_string();
+            while let Ok(req) = rx.recv() {
+                let ModelFetchReq::Fetch { field, claude_idx, .. } = req;
+                let _ = tx.send(ModelFetchMsg::Finished {
+                    field,
+                    claude_idx,
+                    result: Err(err.clone()),
+                });
+            }
+            return;
+        }
+    };
+
+    while let Ok(req) = rx.recv() {
+        let ModelFetchReq::Fetch { base_url, api_key, field, claude_idx } = req;
+        let result = rt
+            .block_on(async {
+                crate::services::ProviderService::fetch_provider_models(&base_url, api_key.as_deref()).await
+            })
+            .map_err(|e| e.to_string());
+
+        let _ = tx.send(ModelFetchMsg::Finished { field, claude_idx, result });
     }
 }
 

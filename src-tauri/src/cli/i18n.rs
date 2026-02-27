@@ -1140,6 +1140,46 @@ pub mod texts {
         }
     }
 
+    pub fn tui_model_fetch_popup_title(fetching: bool) -> String {
+        if is_chinese() {
+            if fetching {
+                "选择模型 (获取中...)".to_string()
+            } else {
+                "选择模型".to_string()
+            }
+        } else {
+            if fetching {
+                "Select Model (Fetching...)".to_string()
+            } else {
+                "Select Model".to_string()
+            }
+        }
+    }
+
+    pub fn tui_model_fetch_search_placeholder() -> &'static str {
+        if is_chinese() {
+            "输入过滤 或 直接回车使用输入值..."
+        } else {
+            "Type to filter, or press Enter to use input..."
+        }
+    }
+
+    pub fn tui_model_fetch_no_models() -> &'static str {
+        if is_chinese() {
+            "没有获取到模型 (可直接输入并在此回车)"
+        } else {
+            "No models found (type custom and press Enter)"
+        }
+    }
+
+    pub fn tui_model_fetch_error_hint(err: &str) -> String {
+        if is_chinese() {
+            format!("获取失败: {}", err)
+        } else {
+            format!("Fetch failed: {}", err)
+        }
+    }
+
     pub fn tui_provider_not_found() -> &'static str {
         if is_chinese() {
             "未找到该供应商。"
@@ -1558,9 +1598,9 @@ pub mod texts {
 
     pub fn tui_home_ascii_logo() -> &'static str {
         // Same ASCII art across languages.
-        r#"                                  _  _         _     
-   ___  ___        ___ __      __(_)| |_  ___ | |__  
-  / __|/ __|_____ / __|\ \ /\ / /| || __|/ __|| '_ \ 
+        r#"                                  _  _         _
+   ___  ___        ___ __      __(_)| |_  ___ | |__
+  / __|/ __|_____ / __|\ \ /\ / /| || __|/ __|| '_ \
  | (__| (__|_____|\__ \ \ V  V / | || |_| (__ | | | |
   \___|\___|      |___/  \_/\_/  |_| \__|\___||_| |_|
                                                       "#
