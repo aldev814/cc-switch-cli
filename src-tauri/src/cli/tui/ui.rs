@@ -3181,21 +3181,37 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect, theme: &super::th
                 Style::default(),
             )]
         } else {
-            let key_style = Style::default().fg(theme.accent).add_modifier(Modifier::BOLD);
+            let key_style = Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD);
             let desc_style = Style::default().fg(theme.dim);
             let sep = Span::styled("  ", desc_style);
 
             let items: &[(&str, &str)] = if i18n::is_chinese() {
-                &[("←→", "菜单/内容"), ("↑↓", "移动"), ("[ ]", "切换应用"),
-                  ("/", "过滤"), ("Esc", "返回"), ("?", "帮助")]
+                &[
+                    ("←→", "菜单/内容"),
+                    ("↑↓", "移动"),
+                    ("[ ]", "切换应用"),
+                    ("/", "过滤"),
+                    ("Esc", "返回"),
+                    ("?", "帮助"),
+                ]
             } else {
-                &[("←→", "menu/content"), ("↑↓", "move"), ("[ ]", "switch app"),
-                  ("/", "filter"), ("Esc", "back"), ("?", "help")]
+                &[
+                    ("←→", "menu/content"),
+                    ("↑↓", "move"),
+                    ("[ ]", "switch app"),
+                    ("/", "filter"),
+                    ("Esc", "back"),
+                    ("?", "help"),
+                ]
             };
 
             let mut v = Vec::new();
             for (i, (key, desc)) in items.iter().enumerate() {
-                if i > 0 { v.push(sep.clone()); }
+                if i > 0 {
+                    v.push(sep.clone());
+                }
                 v.push(Span::styled(format!(" {} ", key), key_style));
                 v.push(Span::styled(format!(" {}", desc), desc_style));
             }
@@ -3563,16 +3579,20 @@ fn render_overlay(frame: &mut Frame<'_>, app: &App, data: &UiData, theme: &super
                 ])
                 .split(inner);
 
-            render_key_bar_center(
-                frame,
-                chunks[0],
-                theme,
-                &[
+            let key_items: Vec<(&str, &str)> = if *editing {
+                vec![
+                    ("←→/Home/End", texts::tui_key_move()),
+                    ("Esc/Enter", texts::tui_key_exit_edit()),
+                ]
+            } else {
+                vec![
                     ("↑↓", texts::tui_key_select()),
-                    ("Enter", "Fetch Model"),
+                    ("Space", texts::tui_key_edit()),
+                    ("Enter", texts::tui_key_fetch_model()),
                     ("Esc", texts::tui_key_close()),
-                ],
-            );
+                ]
+            };
+            render_key_bar_center(frame, chunks[0], theme, &key_items);
 
             if let Some(FormState::ProviderAdd(provider)) = app.form.as_ref() {
                 let labels = [
@@ -3626,18 +3646,55 @@ fn render_overlay(frame: &mut Frame<'_>, app: &App, data: &UiData, theme: &super
                 let hint_block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Plain)
-                    .border_style(Style::default().fg(theme.dim));
+                    .border_style(if *editing {
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.dim)
+                    })
+                    .title(if *editing {
+                        texts::tui_form_editing_title()
+                    } else {
+                        texts::tui_form_input_title()
+                    });
                 frame.render_widget(hint_block.clone(), chunks[2]);
                 let hint_inner = hint_block.inner(chunks[2]);
 
-                frame.render_widget(
-                    Paragraph::new(Line::from(vec![
-                        Span::styled("Press ", Style::default().fg(theme.dim)),
-                        Span::styled("Enter", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-                        Span::styled(" to auto-fetch models from API.", Style::default().fg(theme.dim)),
-                    ])).alignment(Alignment::Center),
-                    hint_inner,
-                );
+                if *editing {
+                    if let Some(input) = provider.claude_model_input(*selected) {
+                        let (visible, cursor_x) = visible_text_window(
+                            &input.value,
+                            input.cursor,
+                            hint_inner.width as usize,
+                        );
+                        frame.render_widget(
+                            Paragraph::new(Line::raw(visible)).wrap(Wrap { trim: false }),
+                            hint_inner,
+                        );
+                        let x = hint_inner.x + cursor_x.min(hint_inner.width.saturating_sub(1));
+                        let y = hint_inner.y;
+                        frame.set_cursor_position((x, y));
+                    }
+                } else {
+                    frame.render_widget(
+                        Paragraph::new(Line::from(vec![
+                            Span::styled(texts::tui_hint_press(), Style::default().fg(theme.dim)),
+                            Span::styled(
+                                "Enter",
+                                Style::default()
+                                    .fg(theme.accent)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                texts::tui_hint_auto_fetch_models_from_api(),
+                                Style::default().fg(theme.dim),
+                            ),
+                        ]))
+                        .alignment(Alignment::Center),
+                        hint_inner,
+                    );
+                }
             } else {
                 frame.render_widget(
                     Paragraph::new(Line::raw(texts::tui_provider_not_found())),
@@ -3672,15 +3729,28 @@ fn render_overlay(frame: &mut Frame<'_>, app: &App, data: &UiData, theme: &super
 
             let input_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
-                .title("Model Search");
+                .border_style(
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .title(texts::tui_model_fetch_search_title());
 
             frame.render_widget(input_block.clone(), chunks[0]);
             let input_inner = input_block.inner(chunks[0]);
-            let (visible, cursor_x) = visible_text_window(input, input.chars().count(), input_inner.width as usize);
+            let (visible, cursor_x) =
+                visible_text_window(input, input.chars().count(), input_inner.width as usize);
+            let (input_text, input_style) = if input.is_empty() {
+                (
+                    texts::tui_model_fetch_search_placeholder().to_string(),
+                    Style::default().fg(theme.dim),
+                )
+            } else {
+                (visible, Style::default())
+            };
 
             frame.render_widget(
-                Paragraph::new(Line::raw(visible)).wrap(Wrap { trim: false }),
+                Paragraph::new(Line::styled(input_text, input_style)).wrap(Wrap { trim: false }),
                 input_inner,
             );
 
@@ -3705,33 +3775,36 @@ fn render_overlay(frame: &mut Frame<'_>, app: &App, data: &UiData, theme: &super
                     models.iter().collect()
                 } else {
                     let q = query.trim().to_lowercase();
-                    models.iter().filter(|m| m.to_lowercase().contains(&q)).collect()
+                    models
+                        .iter()
+                        .filter(|m| m.to_lowercase().contains(&q))
+                        .collect()
                 };
 
                 if filtered.is_empty() {
-                     let hint = if models.is_empty() {
+                    let hint = if models.is_empty() {
                         texts::tui_model_fetch_no_models().to_string()
-                     } else {
-                         texts::tui_model_fetch_no_models().to_string()
-                     };
-                     let p = Paragraph::new(Line::styled(hint, Style::default().fg(theme.dim)))
-                         .alignment(Alignment::Center);
-                     frame.render_widget(p, list_area);
+                    } else {
+                        texts::tui_model_fetch_no_matches().to_string()
+                    };
+                    let p = Paragraph::new(Line::styled(hint, Style::default().fg(theme.dim)))
+                        .alignment(Alignment::Center);
+                    frame.render_widget(p, list_area);
                 } else {
-                     let items: Vec<ListItem> = filtered
-                         .iter()
-                         .map(|m| ListItem::new(Line::raw(*m)))
-                         .collect();
+                    let items: Vec<ListItem> = filtered
+                        .iter()
+                        .map(|m| ListItem::new(Line::raw(*m)))
+                        .collect();
 
-                     let list = List::new(items)
-                         .block(Block::default().borders(Borders::NONE))
-                         .highlight_style(selection_style(theme))
-                         .highlight_symbol(highlight_symbol(theme));
+                    let list = List::new(items)
+                        .block(Block::default().borders(Borders::NONE))
+                        .highlight_style(selection_style(theme))
+                        .highlight_symbol(highlight_symbol(theme));
 
-                     let mut state = ratatui::widgets::ListState::default();
-                     state.select(Some(*selected_idx));
+                    let mut state = ratatui::widgets::ListState::default();
+                    state.select(Some(*selected_idx));
 
-                     frame.render_stateful_widget(list, list_area, &mut state);
+                    frame.render_stateful_widget(list, list_area, &mut state);
                 }
             }
         }

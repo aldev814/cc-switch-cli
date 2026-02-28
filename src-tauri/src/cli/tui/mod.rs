@@ -7,6 +7,7 @@ mod theme;
 mod ui;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -27,13 +28,21 @@ use crate::settings::{
     WebDavSyncSettings,
 };
 
-use app::{Action, App, ConfirmAction, ConfirmOverlay, EditorSubmit, LoadingKind, Overlay, TextViewState, ToastKind};
+use app::{
+    Action, App, ConfirmAction, ConfirmOverlay, EditorSubmit, LoadingKind, Overlay, TextViewState,
+    ToastKind,
+};
 use data::{load_state, UiData};
 use form::{FormState, ProviderAddField};
 use terminal::{PanicRestoreHookGuard, TuiTerminal};
 
 fn command_lookup_name(raw: &str) -> Option<&str> {
     raw.split_whitespace().next()
+}
+
+fn next_model_fetch_request_id() -> u64 {
+    static NEXT_MODEL_FETCH_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+    NEXT_MODEL_FETCH_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 enum SpeedtestMsg {
@@ -165,6 +174,7 @@ struct UpdateSystem {
 
 pub enum ModelFetchReq {
     Fetch {
+        request_id: u64,
         base_url: String,
         api_key: Option<String>,
         field: ProviderAddField,
@@ -174,6 +184,7 @@ pub enum ModelFetchReq {
 
 pub enum ModelFetchMsg {
     Finished {
+        request_id: u64,
         field: ProviderAddField,
         claude_idx: Option<usize>,
         result: Result<Vec<String>, String>,
@@ -297,7 +308,7 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
         Ok(system) => Some(system),
         Err(err) => {
             app.push_toast(
-                format!("Failed to start model fetch worker: {}", err),
+                texts::tui_toast_model_fetch_worker_unavailable(&err.to_string()),
                 ToastKind::Warning,
             );
             None
@@ -493,8 +504,14 @@ fn handle_local_env_msg(app: &mut App, msg: LocalEnvMsg) {
 
 fn handle_model_fetch_msg(app: &mut App, msg: ModelFetchMsg) {
     match msg {
-        ModelFetchMsg::Finished { field, claude_idx, result } => {
+        ModelFetchMsg::Finished {
+            request_id,
+            field,
+            claude_idx,
+            result,
+        } => {
             if let Overlay::ModelFetchPicker {
+                request_id: current_request_id,
                 fetching: ref mut f,
                 models: ref mut m,
                 error: ref mut e,
@@ -503,6 +520,9 @@ fn handle_model_fetch_msg(app: &mut App, msg: ModelFetchMsg) {
                 ..
             } = app.overlay
             {
+                if current_request_id != request_id {
+                    return;
+                }
                 if current_field == &field && current_claude_idx == &claude_idx {
                     *f = false;
                     match result {
@@ -1414,13 +1434,23 @@ fn handle_action(
             }
             Ok(())
         }
-        Action::ProviderModelFetch { base_url, api_key, field, claude_idx } => {
+        Action::ProviderModelFetch {
+            base_url,
+            api_key,
+            field,
+            claude_idx,
+        } => {
             let Some(tx) = model_fetch_req_tx else {
-                app.push_toast("Model fetch system disabled".to_string(), ToastKind::Warning);
+                app.push_toast(
+                    texts::tui_toast_model_fetch_worker_disabled(),
+                    ToastKind::Warning,
+                );
                 return Ok(());
             };
+            let request_id = next_model_fetch_request_id();
 
             app.overlay = Overlay::ModelFetchPicker {
+                request_id,
                 field: field.clone(),
                 claude_idx,
                 input: String::new(),
@@ -1431,10 +1461,19 @@ fn handle_action(
                 selected_idx: 0,
             };
 
-            if let Err(err) = tx.send(ModelFetchReq::Fetch { base_url, api_key, field, claude_idx }) {
-                if let Overlay::ModelFetchPicker { fetching, error, .. } = &mut app.overlay {
+            if let Err(err) = tx.send(ModelFetchReq::Fetch {
+                request_id,
+                base_url,
+                api_key,
+                field,
+                claude_idx,
+            }) {
+                if let Overlay::ModelFetchPicker {
+                    fetching, error, ..
+                } = &mut app.overlay
+                {
                     *fetching = false;
-                    *error = Some(err.to_string());
+                    *error = Some(texts::tui_model_fetch_error_hint(&err.to_string()));
                 }
             }
             Ok(())
@@ -1601,8 +1640,7 @@ fn handle_action(
             let state = load_state()?;
             let backup_id = ConfigService::import_config_from_path(&source, &state)?;
             // 导入后同步 live 配置
-            if let Err(e) =
-                crate::services::provider::ProviderService::sync_current_to_live(&state)
+            if let Err(e) = crate::services::provider::ProviderService::sync_current_to_live(&state)
             {
                 log::warn!("配置导入后同步 live 配置失败: {e}");
             }
@@ -1632,8 +1670,7 @@ fn handle_action(
             let state = load_state()?;
             let pre_backup = ConfigService::restore_from_backup_id(&id, &state)?;
             // 备份恢复后同步 live 配置，与 WebDAV 下载后同理
-            if let Err(e) =
-                crate::services::provider::ProviderService::sync_current_to_live(&state)
+            if let Err(e) = crate::services::provider::ProviderService::sync_current_to_live(&state)
             {
                 log::warn!("备份恢复后同步 live 配置失败: {e}");
             }
@@ -2303,8 +2340,14 @@ fn model_fetch_worker_loop(rx: mpsc::Receiver<ModelFetchReq>, tx: mpsc::Sender<M
         Err(e) => {
             let err = e.to_string();
             while let Ok(req) = rx.recv() {
-                let ModelFetchReq::Fetch { field, claude_idx, .. } = req;
+                let ModelFetchReq::Fetch {
+                    request_id,
+                    field,
+                    claude_idx,
+                    ..
+                } = req;
                 let _ = tx.send(ModelFetchMsg::Finished {
+                    request_id,
                     field,
                     claude_idx,
                     result: Err(err.clone()),
@@ -2315,14 +2358,29 @@ fn model_fetch_worker_loop(rx: mpsc::Receiver<ModelFetchReq>, tx: mpsc::Sender<M
     };
 
     while let Ok(req) = rx.recv() {
-        let ModelFetchReq::Fetch { base_url, api_key, field, claude_idx } = req;
+        let ModelFetchReq::Fetch {
+            request_id,
+            base_url,
+            api_key,
+            field,
+            claude_idx,
+        } = req;
         let result = rt
             .block_on(async {
-                crate::services::ProviderService::fetch_provider_models(&base_url, api_key.as_deref()).await
+                crate::services::ProviderService::fetch_provider_models(
+                    &base_url,
+                    api_key.as_deref(),
+                )
+                .await
             })
             .map_err(|e| e.to_string());
 
-        let _ = tx.send(ModelFetchMsg::Finished { field, claude_idx, result });
+        let _ = tx.send(ModelFetchMsg::Finished {
+            request_id,
+            field,
+            claude_idx,
+            result,
+        });
     }
 }
 

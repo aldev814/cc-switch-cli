@@ -154,6 +154,7 @@ pub enum Overlay {
         editing: bool,
     },
     ModelFetchPicker {
+        request_id: u64,
         field: ProviderAddField,
         claude_idx: Option<usize>,
         input: String,
@@ -1766,9 +1767,7 @@ impl App {
                                 Action::None
                             }
                         }
-                        ConfirmAction::WebDavMigrateV1ToV2 => {
-                            Action::ConfigWebDavMigrateV1ToV2
-                        }
+                        ConfirmAction::WebDavMigrateV1ToV2 => Action::ConfigWebDavMigrateV1ToV2,
                     };
                     self.overlay = Overlay::None;
                     action
@@ -2171,7 +2170,7 @@ impl App {
                 claude_idx,
                 input,
                 query,
-                fetching,
+                fetching: _,
                 models,
                 selected_idx,
                 ..
@@ -2230,9 +2229,6 @@ impl App {
                         Action::None
                     }
                     KeyCode::Enter => {
-                        if *fetching {
-                            return Action::None;
-                        }
                         let selected_model = input.trim().to_string();
 
                         if selected_model.is_empty() {
@@ -2247,7 +2243,8 @@ impl App {
                         if let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() {
                             if field == ProviderAddField::ClaudeModelConfig {
                                 if let Some(idx) = claude_idx {
-                                    if let Some(input_field) = provider.claude_model_input_mut(idx) {
+                                    if let Some(input_field) = provider.claude_model_input_mut(idx)
+                                    {
                                         input_field.set(selected_model);
                                         provider.mark_claude_model_config_touched();
                                     }
@@ -2870,8 +2867,12 @@ impl App {
                                         _ => None,
                                     };
                                     let base_url = match selected {
-                                        ProviderAddField::CodexModel => provider.codex_base_url.value.clone(),
-                                        ProviderAddField::GeminiModel => provider.gemini_base_url.value.clone(),
+                                        ProviderAddField::CodexModel => {
+                                            provider.codex_base_url.value.clone()
+                                        }
+                                        ProviderAddField::GeminiModel => {
+                                            provider.gemini_base_url.value.clone()
+                                        }
                                         _ => String::new(),
                                     };
                                     return Action::ProviderModelFetch {

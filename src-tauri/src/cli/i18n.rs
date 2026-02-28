@@ -1140,6 +1140,22 @@ pub mod texts {
         }
     }
 
+    pub fn tui_hint_press() -> &'static str {
+        if is_chinese() {
+            "按 "
+        } else {
+            "Press "
+        }
+    }
+
+    pub fn tui_hint_auto_fetch_models_from_api() -> &'static str {
+        if is_chinese() {
+            " 从 API 自动获取模型。"
+        } else {
+            " to auto-fetch models from API."
+        }
+    }
+
     pub fn tui_model_fetch_popup_title(fetching: bool) -> String {
         if is_chinese() {
             if fetching {
@@ -1164,11 +1180,27 @@ pub mod texts {
         }
     }
 
+    pub fn tui_model_fetch_search_title() -> &'static str {
+        if is_chinese() {
+            "模型搜索"
+        } else {
+            "Model Search"
+        }
+    }
+
     pub fn tui_model_fetch_no_models() -> &'static str {
         if is_chinese() {
             "没有获取到模型 (可直接输入并在此回车)"
         } else {
             "No models found (type custom and press Enter)"
+        }
+    }
+
+    pub fn tui_model_fetch_no_matches() -> &'static str {
+        if is_chinese() {
+            "没有匹配结果 (可直接输入并在此回车)"
+        } else {
+            "No matching models (press Enter to use input)"
         }
     }
 
@@ -1577,6 +1609,14 @@ pub mod texts {
             "选择"
         } else {
             "select"
+        }
+    }
+
+    pub fn tui_key_fetch_model() -> &'static str {
+        if is_chinese() {
+            "获取模型"
+        } else {
+            "fetch model"
         }
     }
 
@@ -2646,6 +2686,22 @@ pub mod texts {
             format!("WebDAV 后台任务不可用: {err}")
         } else {
             format!("WebDAV worker unavailable: {err}")
+        }
+    }
+
+    pub fn tui_toast_model_fetch_worker_unavailable(err: &str) -> String {
+        if is_chinese() {
+            format!("模型获取后台任务不可用: {err}")
+        } else {
+            format!("Model fetch worker unavailable: {err}")
+        }
+    }
+
+    pub fn tui_toast_model_fetch_worker_disabled() -> &'static str {
+        if is_chinese() {
+            "本次会话模型获取后台任务不可用。"
+        } else {
+            "Model fetch worker is disabled for this session."
         }
     }
 

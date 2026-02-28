@@ -1,5 +1,6 @@
 use reqwest::Client;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::error::AppError;
@@ -39,7 +40,8 @@ impl ProviderService {
             .build()
             .map_err(|e| AppError::Message(e.to_string()))?;
 
-        let mut last_err = None;
+        let mut last_err_zh = None;
+        let mut last_err_en = None;
 
         for url in candidate_urls {
             let mut req = client.get(&url);
@@ -70,7 +72,9 @@ impl ProviderService {
                             if models.is_empty() {
                                 if let Some(data) = json.get("models").and_then(|d| d.as_array()) {
                                     for item in data {
-                                        if let Some(name) = item.get("name").and_then(|i| i.as_str()) {
+                                        if let Some(name) =
+                                            item.get("name").and_then(|i| i.as_str())
+                                        {
                                             let id = name.strip_prefix("models/").unwrap_or(name);
                                             models.push(id.to_string());
                                         }
@@ -90,30 +94,41 @@ impl ProviderService {
                             }
 
                             if !models.is_empty() {
-                                // 去重（有些不规范的接口可能会返回重复项）
-                                models.dedup();
+                                // 保序去重，避免非相邻重复项残留。
+                                let mut seen = HashSet::new();
+                                models.retain(|model| seen.insert(model.clone()));
                                 return Ok(models);
                             } else {
-                                last_err = Some(format!("未能在响应中找到模型列表 (URL: {})", url));
+                                last_err_zh =
+                                    Some(format!("未能在响应中找到模型列表 (URL: {})", url));
+                                last_err_en =
+                                    Some(format!("No model list found in response (URL: {})", url));
                             }
                         } else {
-                            last_err = Some(format!("无法解析 JSON 响应 (URL: {})", url));
+                            last_err_zh = Some(format!("无法解析 JSON 响应 (URL: {})", url));
+                            last_err_en =
+                                Some(format!("Failed to parse JSON response (URL: {})", url));
                         }
                     } else {
-                        last_err = Some(format!("HTTP {} (URL: {})", resp.status(), url));
+                        let err = format!("HTTP {} (URL: {})", resp.status(), url);
+                        last_err_zh = Some(err.clone());
+                        last_err_en = Some(err);
                     }
                 }
                 Err(e) => {
-                    last_err = Some(e.to_string());
+                    let err = e.to_string();
+                    last_err_zh = Some(err.clone());
+                    last_err_en = Some(err);
                 }
             }
         }
 
-        let err_msg = last_err.unwrap_or_else(|| "Unknown error".to_string());
+        let err_zh = last_err_zh.unwrap_or_else(|| "未知错误".to_string());
+        let err_en = last_err_en.unwrap_or_else(|| "Unknown error".to_string());
         Err(AppError::localized(
             "fetch.failed",
-            format!("拉取失败: {}", err_msg),
-            format!("Fetch failed: {}", err_msg),
+            format!("拉取失败: {}", err_zh),
+            format!("Fetch failed: {}", err_en),
         ))
     }
 }
