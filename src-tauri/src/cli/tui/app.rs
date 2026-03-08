@@ -2069,7 +2069,7 @@ impl App {
                     Action::None
                 }
                 KeyCode::Down => {
-                    *selected = (*selected + 1).min(2);
+                    *selected = (*selected + 1).min(3);
                     Action::None
                 }
                 KeyCode::Enter => {
@@ -2112,7 +2112,7 @@ impl App {
                     Action::None
                 }
                 KeyCode::Down => {
-                    *selected = (*selected + 1).min(2);
+                    *selected = (*selected + 1).min(3);
                     Action::None
                 }
                 KeyCode::Enter => {
@@ -2352,7 +2352,7 @@ impl App {
                     Action::None
                 }
                 KeyCode::Down => {
-                    *selected = (*selected + 1).min(2);
+                    *selected = (*selected + 1).min(3);
                     Action::None
                 }
                 KeyCode::Char('x') | KeyCode::Char(' ') => {
@@ -2941,7 +2941,9 @@ impl App {
                                 }
                                 return Action::None;
                             }
-                            ProviderAddField::CodexModel | ProviderAddField::GeminiModel => {
+                            ProviderAddField::CodexModel
+                            | ProviderAddField::GeminiModel
+                            | ProviderAddField::OpenCodeModelId => {
                                 if matches!(key.code, KeyCode::Enter) {
                                     let api_key = match selected {
                                         ProviderAddField::CodexModel => {
@@ -2958,6 +2960,13 @@ impl App {
                                                 Some(provider.gemini_api_key.value.clone())
                                             }
                                         }
+                                        ProviderAddField::OpenCodeModelId => {
+                                            if provider.opencode_api_key.value.trim().is_empty() {
+                                                None
+                                            } else {
+                                                Some(provider.opencode_api_key.value.clone())
+                                            }
+                                        }
                                         _ => None,
                                     };
                                     let base_url = match selected {
@@ -2966,6 +2975,9 @@ impl App {
                                         }
                                         ProviderAddField::GeminiModel => {
                                             provider.gemini_base_url.value.clone()
+                                        }
+                                        ProviderAddField::OpenCodeModelId => {
+                                            provider.opencode_base_url.value.clone()
                                         }
                                         _ => String::new(),
                                     };
@@ -3780,10 +3792,12 @@ fn cycle_app_type(current: &AppType, dir: i8) -> AppType {
     match (current, dir) {
         (AppType::Claude, 1) => AppType::Codex,
         (AppType::Codex, 1) => AppType::Gemini,
-        (AppType::Gemini, 1) => AppType::Claude,
-        (AppType::Claude, -1) => AppType::Gemini,
+        (AppType::Gemini, 1) => AppType::OpenCode,
+        (AppType::OpenCode, 1) => AppType::Claude,
+        (AppType::Claude, -1) => AppType::OpenCode,
         (AppType::Codex, -1) => AppType::Claude,
         (AppType::Gemini, -1) => AppType::Codex,
+        (AppType::OpenCode, -1) => AppType::Gemini,
         (other, _) => other.clone(),
     }
 }
@@ -3793,7 +3807,7 @@ fn app_type_picker_index(app_type: &AppType) -> usize {
         AppType::Claude => 0,
         AppType::Codex => 1,
         AppType::Gemini => 2,
-        AppType::OpenCode => 1,
+        AppType::OpenCode => 3,
     }
 }
 
@@ -3801,6 +3815,7 @@ fn app_type_for_picker_index(index: usize) -> AppType {
     match index {
         1 => AppType::Codex,
         2 => AppType::Gemini,
+        3 => AppType::OpenCode,
         _ => AppType::Claude,
     }
 }
@@ -3936,6 +3951,25 @@ mod tests {
         assert!(matches!(
             app.on_key(key(KeyCode::Char(']')), &data()),
             Action::SetAppType(AppType::Codex)
+        ));
+        assert!(matches!(
+            app.on_key(key(KeyCode::Char('[')), &data()),
+            Action::SetAppType(AppType::OpenCode)
+        ));
+    }
+
+    #[test]
+    fn app_cycles_through_opencode() {
+        let mut app = App::new(Some(AppType::Gemini));
+        assert!(matches!(
+            app.on_key(key(KeyCode::Char(']')), &data()),
+            Action::SetAppType(AppType::OpenCode)
+        ));
+
+        let mut app = App::new(Some(AppType::OpenCode));
+        assert!(matches!(
+            app.on_key(key(KeyCode::Char(']')), &data()),
+            Action::SetAppType(AppType::Claude)
         ));
         assert!(matches!(
             app.on_key(key(KeyCode::Char('[')), &data()),
@@ -4297,6 +4331,47 @@ mod tests {
         assert!(matches!(
             action,
             Action::McpSetApps { id, apps } if id == "m1" && apps.codex && !apps.claude && !apps.gemini
+        ));
+    }
+
+    #[test]
+    fn mcp_apps_picker_can_select_opencode() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Mcp;
+        app.focus = Focus::Content;
+
+        let mut data = UiData::default();
+        data.mcp.rows.push(super::super::data::McpRow {
+            id: "m1".to_string(),
+            server: crate::app_config::McpServer {
+                id: "m1".to_string(),
+                name: "Server".to_string(),
+                server: json!({}),
+                apps: crate::app_config::McpApps::default(),
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: vec![],
+            },
+        });
+
+        app.on_key(key(KeyCode::Char('m')), &data);
+        app.on_key(key(KeyCode::Down), &data);
+        app.on_key(key(KeyCode::Down), &data);
+        app.on_key(key(KeyCode::Down), &data);
+
+        let action = app.on_key(key(KeyCode::Char('x')), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            &app.overlay,
+            Overlay::McpAppsPicker { selected, apps, .. } if *selected == 3 && apps.opencode
+        ));
+
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(
+            action,
+            Action::McpSetApps { id, apps }
+                if id == "m1" && !apps.claude && !apps.codex && !apps.gemini && apps.opencode
         ));
     }
 

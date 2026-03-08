@@ -1821,7 +1821,12 @@ fn handle_action(
             let mut skipped: Vec<&str> = Vec::new();
             let mut changed = false;
 
-            for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+            for app_type in [
+                AppType::Claude,
+                AppType::Codex,
+                AppType::Gemini,
+                AppType::OpenCode,
+            ] {
                 let next_enabled = apps.is_enabled_for(&app_type);
                 if before.is_enabled_for(&app_type) == next_enabled {
                     continue;
@@ -1866,7 +1871,7 @@ fn handle_action(
                 AppType::Claude => McpService::import_from_claude(&state)?,
                 AppType::Codex => McpService::import_from_codex(&state)?,
                 AppType::Gemini => McpService::import_from_gemini(&state)?,
-                AppType::OpenCode => 0,
+                AppType::OpenCode => McpService::import_from_opencode(&state)?,
             };
             app.push_toast(texts::tui_toast_mcp_imported(count), ToastKind::Success);
             *data = UiData::load(&app.app_type)?;

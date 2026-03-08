@@ -161,6 +161,13 @@ pub enum ProviderAddField {
     GeminiApiKey,
     GeminiBaseUrl,
     GeminiModel,
+    OpenCodeNpmPackage,
+    OpenCodeApiKey,
+    OpenCodeBaseUrl,
+    OpenCodeModelId,
+    OpenCodeModelName,
+    OpenCodeModelContextLimit,
+    OpenCodeModelOutputLimit,
     CommonConfigDivider,
     CommonSnippet,
     IncludeCommonConfig,
@@ -257,12 +264,26 @@ const PROVIDER_TEMPLATE_DEFS_GEMINI: [ProviderTemplateDef; 2] = [
     },
 ];
 
+const PROVIDER_TEMPLATE_DEFS_OPENCODE: [ProviderTemplateDef; 1] = [ProviderTemplateDef {
+    id: ProviderTemplateId::Custom,
+    label: "Custom",
+}];
+
+const NO_SPONSOR_PROVIDER_PRESETS: [SponsorProviderPreset; 0] = [];
+
 fn provider_builtin_template_defs(app_type: &AppType) -> &'static [ProviderTemplateDef] {
     match app_type {
         AppType::Claude => &PROVIDER_TEMPLATE_DEFS_CLAUDE,
         AppType::Codex => &PROVIDER_TEMPLATE_DEFS_CODEX,
         AppType::Gemini => &PROVIDER_TEMPLATE_DEFS_GEMINI,
-        AppType::OpenCode => &PROVIDER_TEMPLATE_DEFS_CODEX,
+        AppType::OpenCode => &PROVIDER_TEMPLATE_DEFS_OPENCODE,
+    }
+}
+
+fn provider_sponsor_presets(app_type: &AppType) -> &'static [SponsorProviderPreset] {
+    match app_type {
+        AppType::OpenCode => &NO_SPONSOR_PROVIDER_PRESETS,
+        _ => &SPONSOR_PROVIDER_PRESETS,
     }
 }
 
@@ -320,6 +341,16 @@ pub struct ProviderAddFormState {
     pub gemini_api_key: TextInput,
     pub gemini_base_url: TextInput,
     pub gemini_model: TextInput,
+
+    // OpenCode
+    pub opencode_npm_package: TextInput,
+    pub opencode_api_key: TextInput,
+    pub opencode_base_url: TextInput,
+    pub opencode_model_id: TextInput,
+    pub opencode_model_name: TextInput,
+    pub opencode_model_context_limit: TextInput,
+    pub opencode_model_output_limit: TextInput,
+    opencode_model_original_id: Option<String>,
 }
 
 impl ProviderAddFormState {
@@ -375,6 +406,15 @@ impl ProviderAddFormState {
             gemini_api_key: TextInput::new(""),
             gemini_base_url: TextInput::new(gemini_base_url_default),
             gemini_model: TextInput::new(""),
+
+            opencode_npm_package: TextInput::new("@ai-sdk/openai-compatible"),
+            opencode_api_key: TextInput::new(""),
+            opencode_base_url: TextInput::new(""),
+            opencode_model_id: TextInput::new(""),
+            opencode_model_name: TextInput::new(""),
+            opencode_model_context_limit: TextInput::new(""),
+            opencode_model_output_limit: TextInput::new(""),
+            opencode_model_original_id: None,
         }
     }
 
@@ -516,7 +556,52 @@ impl ProviderAddFormState {
                     form.gemini_auth_type = GeminiAuthType::OAuth;
                 }
             }
-            AppType::OpenCode => {}
+            AppType::OpenCode => {
+                if let Some(npm) = provider.settings_config.get("npm").and_then(|v| v.as_str()) {
+                    form.opencode_npm_package.set(npm);
+                }
+                if let Some(options) = provider
+                    .settings_config
+                    .get("options")
+                    .and_then(|v| v.as_object())
+                {
+                    if let Some(api_key) = options.get("apiKey").and_then(|v| v.as_str()) {
+                        form.opencode_api_key.set(api_key);
+                    }
+                    if let Some(base_url) = options.get("baseURL").and_then(|v| v.as_str()) {
+                        form.opencode_base_url.set(base_url);
+                    }
+                }
+                if let Some(models) = provider
+                    .settings_config
+                    .get("models")
+                    .and_then(|v| v.as_object())
+                {
+                    if let Some((model_id, model_value)) =
+                        models.iter().max_by(|(id_a, model_a), (id_b, model_b)| {
+                            opencode_model_rank(model_a)
+                                .cmp(&opencode_model_rank(model_b))
+                                .then_with(|| id_b.cmp(id_a))
+                        })
+                    {
+                        form.opencode_model_original_id = Some(model_id.clone());
+                        form.opencode_model_id.set(model_id);
+                        if let Some(name) = model_value.get("name").and_then(|v| v.as_str()) {
+                            form.opencode_model_name.set(name);
+                        } else {
+                            form.opencode_model_name.set(model_id);
+                        }
+                        if let Some(limit) = model_value.get("limit").and_then(|v| v.as_object()) {
+                            if let Some(context) = limit.get("context").and_then(|v| v.as_u64()) {
+                                form.opencode_model_context_limit.set(context.to_string());
+                            }
+                            if let Some(output) = limit.get("output").and_then(|v| v.as_u64()) {
+                                form.opencode_model_output_limit.set(output.to_string());
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         form
@@ -531,7 +616,8 @@ impl ProviderAddFormState {
     }
 
     pub fn template_count(&self) -> usize {
-        provider_builtin_template_defs(&self.app_type).len() + SPONSOR_PROVIDER_PRESETS.len()
+        provider_builtin_template_defs(&self.app_type).len()
+            + provider_sponsor_presets(&self.app_type).len()
     }
 
     pub fn template_labels(&self) -> Vec<&'static str> {
@@ -540,7 +626,7 @@ impl ProviderAddFormState {
             .map(|def| def.label)
             .collect::<Vec<_>>();
         labels.extend(
-            SPONSOR_PROVIDER_PRESETS
+            provider_sponsor_presets(&self.app_type)
                 .iter()
                 .map(|preset| preset.chip_label),
         );
@@ -575,7 +661,15 @@ impl ProviderAddFormState {
                     fields.push(ProviderAddField::GeminiModel);
                 }
             }
-            AppType::OpenCode => {}
+            AppType::OpenCode => {
+                fields.push(ProviderAddField::OpenCodeNpmPackage);
+                fields.push(ProviderAddField::OpenCodeApiKey);
+                fields.push(ProviderAddField::OpenCodeBaseUrl);
+                fields.push(ProviderAddField::OpenCodeModelId);
+                fields.push(ProviderAddField::OpenCodeModelName);
+                fields.push(ProviderAddField::OpenCodeModelContextLimit);
+                fields.push(ProviderAddField::OpenCodeModelOutputLimit);
+            }
         }
 
         fields.push(ProviderAddField::CommonConfigDivider);
@@ -599,6 +693,13 @@ impl ProviderAddFormState {
             ProviderAddField::GeminiApiKey => Some(&self.gemini_api_key),
             ProviderAddField::GeminiBaseUrl => Some(&self.gemini_base_url),
             ProviderAddField::GeminiModel => Some(&self.gemini_model),
+            ProviderAddField::OpenCodeNpmPackage => Some(&self.opencode_npm_package),
+            ProviderAddField::OpenCodeApiKey => Some(&self.opencode_api_key),
+            ProviderAddField::OpenCodeBaseUrl => Some(&self.opencode_base_url),
+            ProviderAddField::OpenCodeModelId => Some(&self.opencode_model_id),
+            ProviderAddField::OpenCodeModelName => Some(&self.opencode_model_name),
+            ProviderAddField::OpenCodeModelContextLimit => Some(&self.opencode_model_context_limit),
+            ProviderAddField::OpenCodeModelOutputLimit => Some(&self.opencode_model_output_limit),
             ProviderAddField::CodexWireApi
             | ProviderAddField::CodexRequiresOpenaiAuth
             | ProviderAddField::ClaudeModelConfig
@@ -624,6 +725,17 @@ impl ProviderAddFormState {
             ProviderAddField::GeminiApiKey => Some(&mut self.gemini_api_key),
             ProviderAddField::GeminiBaseUrl => Some(&mut self.gemini_base_url),
             ProviderAddField::GeminiModel => Some(&mut self.gemini_model),
+            ProviderAddField::OpenCodeNpmPackage => Some(&mut self.opencode_npm_package),
+            ProviderAddField::OpenCodeApiKey => Some(&mut self.opencode_api_key),
+            ProviderAddField::OpenCodeBaseUrl => Some(&mut self.opencode_base_url),
+            ProviderAddField::OpenCodeModelId => Some(&mut self.opencode_model_id),
+            ProviderAddField::OpenCodeModelName => Some(&mut self.opencode_model_name),
+            ProviderAddField::OpenCodeModelContextLimit => {
+                Some(&mut self.opencode_model_context_limit)
+            }
+            ProviderAddField::OpenCodeModelOutputLimit => {
+                Some(&mut self.opencode_model_output_limit)
+            }
             ProviderAddField::CodexWireApi
             | ProviderAddField::CodexRequiresOpenaiAuth
             | ProviderAddField::ClaudeModelConfig
@@ -673,16 +785,31 @@ impl ProviderAddFormState {
         self.claude_model_config_touched = true;
     }
 
+    fn opencode_primary_model_id(&self) -> Option<String> {
+        let model_id = self.opencode_model_id.value.trim();
+        if !model_id.is_empty() {
+            return Some(model_id.to_string());
+        }
+
+        let model_name = self.opencode_model_name.value.trim();
+        if !model_name.is_empty() {
+            return Some(model_name.to_string());
+        }
+
+        None
+    }
+
     pub fn apply_template(&mut self, idx: usize, existing_ids: &[String]) {
         let builtin_defs = provider_builtin_template_defs(&self.app_type);
-        let total_templates = builtin_defs.len() + SPONSOR_PROVIDER_PRESETS.len();
+        let sponsor_presets = provider_sponsor_presets(&self.app_type);
+        let total_templates = builtin_defs.len() + sponsor_presets.len();
         let idx = idx.min(total_templates.saturating_sub(1));
         self.template_idx = idx;
         self.id_is_manual = false;
 
         if idx >= builtin_defs.len() {
             let sponsor_idx = idx.saturating_sub(builtin_defs.len());
-            if let Some(preset) = SPONSOR_PROVIDER_PRESETS.get(sponsor_idx) {
+            if let Some(preset) = sponsor_presets.get(sponsor_idx) {
                 self.apply_sponsor_preset(preset);
             }
         } else {
@@ -722,6 +849,14 @@ impl ProviderAddFormState {
                     self.gemini_api_key = defaults.gemini_api_key;
                     self.gemini_base_url = defaults.gemini_base_url;
                     self.gemini_model = defaults.gemini_model;
+                    self.opencode_npm_package = defaults.opencode_npm_package;
+                    self.opencode_api_key = defaults.opencode_api_key;
+                    self.opencode_base_url = defaults.opencode_base_url;
+                    self.opencode_model_id = defaults.opencode_model_id;
+                    self.opencode_model_name = defaults.opencode_model_name;
+                    self.opencode_model_context_limit = defaults.opencode_model_context_limit;
+                    self.opencode_model_output_limit = defaults.opencode_model_output_limit;
+                    self.opencode_model_original_id = defaults.opencode_model_original_id;
                 }
                 return;
             }
@@ -998,7 +1133,91 @@ impl ProviderAddFormState {
                     }
                 }
             }
-            AppType::OpenCode => {}
+            AppType::OpenCode => {
+                let npm_package = self.opencode_npm_package.value.trim();
+                settings_obj.insert(
+                    "npm".to_string(),
+                    json!(if npm_package.is_empty() {
+                        "@ai-sdk/openai-compatible"
+                    } else {
+                        npm_package
+                    }),
+                );
+
+                let options_value = settings_obj
+                    .entry("options".to_string())
+                    .or_insert_with(|| json!({}));
+                if !options_value.is_object() {
+                    *options_value = json!({});
+                }
+                let options_obj = options_value
+                    .as_object_mut()
+                    .expect("options must be a JSON object");
+                set_or_remove_trimmed(options_obj, "apiKey", &self.opencode_api_key.value);
+                set_or_remove_trimmed(options_obj, "baseURL", &self.opencode_base_url.value);
+                if options_obj.is_empty() {
+                    settings_obj.remove("options");
+                }
+
+                let mut models_value = settings_obj
+                    .remove("models")
+                    .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+                if !models_value.is_object() {
+                    models_value = Value::Object(serde_json::Map::new());
+                }
+                let models_obj = models_value
+                    .as_object_mut()
+                    .expect("models must be a JSON object");
+
+                let current_model_id = self.opencode_primary_model_id();
+                if let Some(original_id) = self.opencode_model_original_id.as_deref() {
+                    if current_model_id.as_deref() != Some(original_id) {
+                        models_obj.remove(original_id);
+                    }
+                }
+
+                if let Some(model_id) = current_model_id {
+                    let mut model_obj = match models_obj.remove(&model_id) {
+                        Some(Value::Object(map)) => map,
+                        _ => serde_json::Map::new(),
+                    };
+                    let model_name = self.opencode_model_name.value.trim().to_string();
+                    model_obj.insert(
+                        "name".to_string(),
+                        json!(if model_name.is_empty() {
+                            model_id.as_str()
+                        } else {
+                            model_name.as_str()
+                        }),
+                    );
+
+                    let limit_value = model_obj
+                        .entry("limit".to_string())
+                        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+                    if !limit_value.is_object() {
+                        *limit_value = Value::Object(serde_json::Map::new());
+                    }
+                    let limit_obj = limit_value
+                        .as_object_mut()
+                        .expect("limit must be a JSON object");
+
+                    set_or_remove_u64(
+                        limit_obj,
+                        "context",
+                        &self.opencode_model_context_limit.value,
+                    );
+                    set_or_remove_u64(limit_obj, "output", &self.opencode_model_output_limit.value);
+                    if limit_obj.is_empty() {
+                        model_obj.remove("limit");
+                    }
+
+                    models_obj.insert(model_id, Value::Object(model_obj));
+                }
+
+                if !models_obj.is_empty() {
+                    settings_obj.insert("models".to_string(), models_value);
+                }
+            }
         }
 
         Value::Object(provider_obj)
@@ -1393,6 +1612,38 @@ fn set_or_remove_trimmed(obj: &mut serde_json::Map<String, Value>, key: &str, ra
     } else {
         obj.insert(key.to_string(), json!(trimmed));
     }
+}
+
+fn set_or_remove_u64(obj: &mut serde_json::Map<String, Value>, key: &str, raw: &str) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        obj.remove(key);
+    } else if let Ok(value) = trimmed.parse::<u64>() {
+        obj.insert(key.to_string(), json!(value));
+    } else {
+        obj.remove(key);
+    }
+}
+
+fn opencode_model_rank(model: &Value) -> usize {
+    let mut score = 0;
+    if model
+        .get("limit")
+        .and_then(|value| value.as_object())
+        .map(|limit| !limit.is_empty())
+        .unwrap_or(false)
+    {
+        score += 1;
+    }
+    if model
+        .get("options")
+        .and_then(|value| value.as_object())
+        .map(|options| !options.is_empty())
+        .unwrap_or(false)
+    {
+        score += 1;
+    }
+    score
 }
 
 #[derive(Debug, Default)]
@@ -1959,7 +2210,7 @@ mod tests {
 
     #[test]
     fn provider_add_form_fields_include_notes() {
-        for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app_type in AppType::all() {
             let form = ProviderAddFormState::new(app_type.clone());
             let fields = form.fields();
 
@@ -2670,6 +2921,122 @@ requires_openai_auth = true
                 .and_then(|value| value.as_str()),
             Some("sk-provider"),
             "provider-specific env keys should be preserved"
+        );
+    }
+
+    #[test]
+    fn provider_add_form_opencode_uses_custom_template_only() {
+        let form = ProviderAddFormState::new(AppType::OpenCode);
+        let labels = form.template_labels();
+
+        assert_eq!(labels, vec!["Custom"]);
+    }
+
+    #[test]
+    fn provider_add_form_opencode_includes_dedicated_fields() {
+        let form = ProviderAddFormState::new(AppType::OpenCode);
+        let fields = form.fields();
+
+        assert!(
+            fields.len() > 6,
+            "OpenCode should expose dedicated provider/model fields instead of only common metadata"
+        );
+    }
+
+    #[test]
+    fn provider_add_form_opencode_builds_settings_from_dedicated_fields() {
+        let mut form = ProviderAddFormState::new(AppType::OpenCode);
+        form.id.set("oc1");
+        form.name.set("OpenCode Provider");
+        form.opencode_npm_package.set("@ai-sdk/openai-compatible");
+        form.opencode_api_key.set("sk-oc");
+        form.opencode_base_url.set("https://api.example.com/v1");
+        form.opencode_model_id.set("gpt-4.1-mini");
+        form.opencode_model_name.set("GPT 4.1 Mini");
+        form.opencode_model_context_limit.set("128000");
+        form.opencode_model_output_limit.set("8192");
+
+        let provider = form.to_provider_json_value();
+        assert_eq!(provider["id"], "oc1");
+        assert_eq!(
+            provider["settingsConfig"]["npm"],
+            "@ai-sdk/openai-compatible"
+        );
+        assert_eq!(provider["settingsConfig"]["options"]["apiKey"], "sk-oc");
+        assert_eq!(
+            provider["settingsConfig"]["options"]["baseURL"],
+            "https://api.example.com/v1"
+        );
+        assert_eq!(
+            provider["settingsConfig"]["models"]["gpt-4.1-mini"]["name"],
+            "GPT 4.1 Mini"
+        );
+        assert_eq!(
+            provider["settingsConfig"]["models"]["gpt-4.1-mini"]["limit"]["context"],
+            128000
+        );
+        assert_eq!(
+            provider["settingsConfig"]["models"]["gpt-4.1-mini"]["limit"]["output"],
+            8192
+        );
+    }
+
+    #[test]
+    fn provider_add_form_opencode_from_provider_backfills_and_preserves_extra_settings() {
+        let provider = Provider::with_id(
+            "oc1".to_string(),
+            "OpenCode Provider".to_string(),
+            json!({
+                "npm": "@ai-sdk/openai-compatible",
+                "options": {
+                    "apiKey": "sk-oc",
+                    "baseURL": "https://api.example.com/v1",
+                    "headers": {
+                        "X-Test": "1"
+                    },
+                    "timeout": 30
+                },
+                "models": {
+                    "gpt-4.1-mini": {
+                        "name": "GPT 4.1 Mini",
+                        "limit": {
+                            "context": 128000,
+                            "output": 8192
+                        },
+                        "options": {
+                            "reasoningEffort": "medium"
+                        }
+                    },
+                    "gpt-4.1": {
+                        "name": "GPT 4.1"
+                    }
+                }
+            }),
+            Some("https://provider.example".to_string()),
+        );
+
+        let form = ProviderAddFormState::from_provider(AppType::OpenCode, &provider);
+        assert_eq!(form.opencode_npm_package.value, "@ai-sdk/openai-compatible");
+        assert_eq!(form.opencode_api_key.value, "sk-oc");
+        assert_eq!(form.opencode_base_url.value, "https://api.example.com/v1");
+        assert_eq!(form.opencode_model_id.value, "gpt-4.1-mini");
+        assert_eq!(form.opencode_model_name.value, "GPT 4.1 Mini");
+        assert_eq!(form.opencode_model_context_limit.value, "128000");
+        assert_eq!(form.opencode_model_output_limit.value, "8192");
+
+        let roundtrip = form.to_provider_json_value();
+        assert_eq!(
+            roundtrip["settingsConfig"]["options"]["headers"]["X-Test"],
+            "1"
+        );
+        assert_eq!(roundtrip["settingsConfig"]["options"]["timeout"], 30);
+        assert_eq!(
+            roundtrip["settingsConfig"]["models"]["gpt-4.1"]["name"],
+            "GPT 4.1"
+        );
+        assert_eq!(
+            roundtrip["settingsConfig"]["models"]["gpt-4.1-mini"]["options"]["reasoningEffort"],
+            "medium"
         );
     }
 }

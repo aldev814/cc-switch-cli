@@ -912,6 +912,10 @@ pub mod texts {
         "G"
     }
 
+    pub fn tui_header_opencode_short() -> &'static str {
+        "O"
+    }
+
     pub fn tui_label_id() -> &'static str {
         "ID"
     }
@@ -973,6 +977,46 @@ pub mod texts {
             "Claude 模型配置"
         } else {
             "Claude Model Config"
+        }
+    }
+
+    pub fn tui_label_provider_package() -> &'static str {
+        if is_chinese() {
+            "Provider / npm 包"
+        } else {
+            "Provider / npm"
+        }
+    }
+
+    pub fn tui_label_opencode_model_id() -> &'static str {
+        if is_chinese() {
+            "主模型 ID"
+        } else {
+            "Main Model ID"
+        }
+    }
+
+    pub fn tui_label_opencode_model_name() -> &'static str {
+        if is_chinese() {
+            "主模型名称"
+        } else {
+            "Main Model Name"
+        }
+    }
+
+    pub fn tui_label_context_limit() -> &'static str {
+        if is_chinese() {
+            "上下文限制"
+        } else {
+            "Context Limit"
+        }
+    }
+
+    pub fn tui_label_output_limit() -> &'static str {
+        if is_chinese() {
+            "输出限制"
+        } else {
+            "Output Limit"
         }
     }
 
@@ -2005,11 +2049,20 @@ pub mod texts {
         }
     }
 
-    pub fn tui_skills_installed_counts(claude: usize, codex: usize, gemini: usize) -> String {
+    pub fn tui_skills_installed_counts(
+        claude: usize,
+        codex: usize,
+        gemini: usize,
+        opencode: usize,
+    ) -> String {
         if is_chinese() {
-            format!("已安装 · Claude: {claude} · Codex: {codex} · Gemini: {gemini}")
+            format!(
+                "已安装 · Claude: {claude} · Codex: {codex} · Gemini: {gemini} · OpenCode: {opencode}"
+            )
         } else {
-            format!("Installed · Claude: {claude} · Codex: {codex} · Gemini: {gemini}")
+            format!(
+                "Installed · Claude: {claude} · Codex: {codex} · Gemini: {gemini} · OpenCode: {opencode}"
+            )
         }
     }
 

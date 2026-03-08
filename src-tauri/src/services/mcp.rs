@@ -160,7 +160,9 @@ impl McpService {
             AppType::Gemini => {
                 mcp::sync_single_server_to_gemini(cfg, &server.id, &server.server)?;
             }
-            AppType::OpenCode => {}
+            AppType::OpenCode => {
+                mcp::sync_single_server_to_opencode(cfg, &server.id, &server.server)?;
+            }
         }
         Ok(())
     }
@@ -183,7 +185,7 @@ impl McpService {
             AppType::Claude => mcp::remove_server_from_claude(id)?,
             AppType::Codex => mcp::remove_server_from_codex(id)?,
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
-            AppType::OpenCode => {}
+            AppType::OpenCode => mcp::remove_server_from_opencode(id)?,
         }
         Ok(())
     }
@@ -269,6 +271,15 @@ impl McpService {
     pub fn import_from_gemini(state: &AppState) -> Result<usize, AppError> {
         let mut cfg = state.config.write()?;
         let count = mcp::import_from_gemini(&mut cfg)?;
+        drop(cfg);
+        state.save()?;
+        Ok(count)
+    }
+
+    /// 从 OpenCode 导入 MCP
+    pub fn import_from_opencode(state: &AppState) -> Result<usize, AppError> {
+        let mut cfg = state.config.write()?;
+        let count = mcp::import_from_opencode(&mut cfg)?;
         drop(cfg);
         state.save()?;
         Ok(count)

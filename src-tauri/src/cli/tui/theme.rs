@@ -31,7 +31,7 @@ pub fn theme_for(app: &AppType) -> Theme {
             AppType::Codex => Color::Rgb(80, 250, 123), // Dracula green
             AppType::Claude => Color::Rgb(139, 233, 253), // Dracula cyan
             AppType::Gemini => Color::Rgb(255, 121, 198), // Dracula pink
-            AppType::OpenCode => Color::Rgb(80, 250, 123),
+            AppType::OpenCode => Color::Rgb(255, 184, 108), // Dracula orange
         }
     };
 
@@ -73,5 +73,32 @@ pub fn theme_for(app: &AppType) -> Theme {
             Color::Rgb(68, 71, 90) // #44475a
         },
         no_color,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn opencode_theme_uses_distinct_accent_from_codex() {
+        let _lock = env_lock().lock().expect("env lock poisoned");
+        let no_color = std::env::var_os("NO_COLOR");
+        unsafe { std::env::remove_var("NO_COLOR") };
+
+        let opencode = theme_for(&AppType::OpenCode);
+        let codex = theme_for(&AppType::Codex);
+
+        if let Some(value) = no_color {
+            unsafe { std::env::set_var("NO_COLOR", value) };
+        }
+
+        assert_ne!(opencode.accent, codex.accent);
     }
 }

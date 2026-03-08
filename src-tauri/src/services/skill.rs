@@ -342,13 +342,22 @@ impl SkillService {
                 }
 
                 // Prefer looking in apps where this skill is enabled; fallback to all apps.
-                let mut candidates: Vec<AppType> =
-                    [AppType::Claude, AppType::Codex, AppType::Gemini]
-                        .into_iter()
-                        .filter(|app| record.apps.is_enabled_for(app))
-                        .collect();
+                let mut candidates: Vec<AppType> = [
+                    AppType::Claude,
+                    AppType::Codex,
+                    AppType::Gemini,
+                    AppType::OpenCode,
+                ]
+                .into_iter()
+                .filter(|app| record.apps.is_enabled_for(app))
+                .collect();
                 if candidates.is_empty() {
-                    candidates = vec![AppType::Claude, AppType::Codex, AppType::Gemini];
+                    candidates = vec![
+                        AppType::Claude,
+                        AppType::Codex,
+                        AppType::Gemini,
+                        AppType::OpenCode,
+                    ];
                 }
 
                 let mut source: Option<PathBuf> = None;
@@ -401,7 +410,12 @@ impl SkillService {
 
         let mut discovered: HashMap<String, SkillApps> = HashMap::new();
 
-        for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+        ] {
             let app_dir = match Self::get_app_skills_dir(&app) {
                 Ok(d) => d,
                 Err(_) => continue,
@@ -592,7 +606,12 @@ impl SkillService {
     pub fn sync_all_enabled_best_effort() -> Result<(), AppError> {
         let mut index = Self::load_index()?;
         let _ = Self::migrate_ssot_if_pending(&mut index);
-        for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+        ] {
             if let Err(e) = Self::sync_to_app(&index, &app) {
                 log::warn!("同步 Skill 到 {app:?} 失败: {e}");
             }
@@ -607,7 +626,12 @@ impl SkillService {
         match app {
             Some(app) => Self::sync_to_app(&index, app)?,
             None => {
-                for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+                for app in [
+                    AppType::Claude,
+                    AppType::Codex,
+                    AppType::Gemini,
+                    AppType::OpenCode,
+                ] {
                     Self::sync_to_app(&index, &app)?;
                 }
             }
@@ -726,7 +750,12 @@ impl SkillService {
             .ok_or_else(|| AppError::Message(format!("未找到已安装的 Skill: {dir}")))?;
 
         // Remove from app dirs (best effort).
-        for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+        ] {
             if let Err(e) = Self::remove_from_app(&dir, &app) {
                 log::warn!("从 {app:?} 删除 Skill {dir} 失败: {e}");
             }
@@ -912,7 +941,12 @@ impl SkillService {
 
         let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
 
-        for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+        ] {
             let app_dir = match Self::get_app_skills_dir(&app) {
                 Ok(d) => d,
                 Err(_) => continue,
@@ -980,7 +1014,12 @@ impl SkillService {
             let mut source_path: Option<PathBuf> = None;
             let mut found_in: Vec<AppType> = Vec::new();
 
-            for app in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+            for app in [
+                AppType::Claude,
+                AppType::Codex,
+                AppType::Gemini,
+                AppType::OpenCode,
+            ] {
                 if let Ok(app_dir) = Self::get_app_skills_dir(&app) {
                     let skill_path = app_dir.join(&dir_name);
                     if skill_path.exists() {

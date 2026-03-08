@@ -311,7 +311,7 @@ fn render_header(
         AppType::Claude => 0,
         AppType::Codex => 1,
         AppType::Gemini => 2,
-        AppType::OpenCode => 1,
+        AppType::OpenCode => 3,
     };
     let tabs_line = Line::from(vec![
         Span::styled(
@@ -335,6 +335,15 @@ fn render_header(
         Span::styled(
             format!("  {}  ", AppType::Gemini.as_str()),
             if selected == 2 {
+                active_chip_style(theme)
+            } else {
+                inactive_chip_style(theme)
+            },
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("  {}  ", AppType::OpenCode.as_str()),
+            if selected == 3 {
                 active_chip_style(theme)
             } else {
                 inactive_chip_style(theme)
@@ -585,7 +594,18 @@ fn render_skills_installed(
         .iter()
         .filter(|s| s.apps.gemini)
         .count();
-    let summary = texts::tui_skills_installed_counts(enabled_claude, enabled_codex, enabled_gemini);
+    let enabled_opencode = data
+        .skills
+        .installed
+        .iter()
+        .filter(|s| s.apps.opencode)
+        .count();
+    let summary = texts::tui_skills_installed_counts(
+        enabled_claude,
+        enabled_codex,
+        enabled_gemini,
+        enabled_opencode,
+    );
 
     let summary_block = Block::default()
         .borders(Borders::ALL)
@@ -649,6 +669,7 @@ fn render_skills_installed(
         Cell::from(texts::tui_header_claude_short()),
         Cell::from(texts::tui_header_codex_short()),
         Cell::from(texts::tui_header_gemini_short()),
+        Cell::from(texts::tui_header_opencode_short()),
     ])
     .style(header_style);
 
@@ -671,14 +692,20 @@ fn render_skills_installed(
             } else {
                 texts::tui_marker_inactive()
             }),
+            Cell::from(if skill.apps.opencode {
+                texts::tui_marker_active()
+            } else {
+                texts::tui_marker_inactive()
+            }),
         ])
     });
 
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(55),
-            Constraint::Percentage(35),
+            Constraint::Percentage(50),
+            Constraint::Percentage(30),
+            Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
@@ -1129,8 +1156,8 @@ fn render_skill_detail(
         ),
         Span::raw(": "),
         Span::raw(format!(
-            "claude={}  codex={}  gemini={}",
-            skill.apps.claude, skill.apps.codex, skill.apps.gemini
+            "claude={}  codex={}  gemini={}  opencode={}",
+            skill.apps.claude, skill.apps.codex, skill.apps.gemini, skill.apps.opencode
         )),
     ]));
 
@@ -1765,6 +1792,13 @@ fn provider_field_label_and_value(
         ProviderAddField::GeminiApiKey => texts::tui_label_api_key().to_string(),
         ProviderAddField::GeminiBaseUrl => texts::tui_label_base_url().to_string(),
         ProviderAddField::GeminiModel => texts::model_label().to_string(),
+        ProviderAddField::OpenCodeNpmPackage => texts::tui_label_provider_package().to_string(),
+        ProviderAddField::OpenCodeApiKey => texts::tui_label_api_key().to_string(),
+        ProviderAddField::OpenCodeBaseUrl => texts::tui_label_base_url().to_string(),
+        ProviderAddField::OpenCodeModelId => texts::tui_label_opencode_model_id().to_string(),
+        ProviderAddField::OpenCodeModelName => texts::tui_label_opencode_model_name().to_string(),
+        ProviderAddField::OpenCodeModelContextLimit => texts::tui_label_context_limit().to_string(),
+        ProviderAddField::OpenCodeModelOutputLimit => texts::tui_label_output_limit().to_string(),
         ProviderAddField::CommonConfigDivider => "- - - - - - - - -".to_string(),
         ProviderAddField::CommonSnippet => texts::tui_config_item_common_snippet().to_string(),
         ProviderAddField::IncludeCommonConfig => texts::tui_form_attach_common_config().to_string(),
@@ -1826,6 +1860,7 @@ fn provider_field_editor_line(
             ProviderAddField::ClaudeApiKey
                 | ProviderAddField::CodexApiKey
                 | ProviderAddField::GeminiApiKey
+                | ProviderAddField::OpenCodeApiKey
         ) {
             input.value.clone()
         } else {
@@ -2810,6 +2845,7 @@ fn render_mcp(
         Cell::from(crate::app_config::AppType::Claude.as_str()),
         Cell::from(crate::app_config::AppType::Codex.as_str()),
         Cell::from(crate::app_config::AppType::Gemini.as_str()),
+        Cell::from(crate::app_config::AppType::OpenCode.as_str()),
     ])
     .style(Style::default().fg(theme.dim).add_modifier(Modifier::BOLD));
 
@@ -2827,6 +2863,11 @@ fn render_mcp(
                 texts::tui_marker_inactive()
             }),
             Cell::from(if row.server.apps.gemini {
+                texts::tui_marker_active()
+            } else {
+                texts::tui_marker_inactive()
+            }),
+            Cell::from(if row.server.apps.opencode {
                 texts::tui_marker_active()
             } else {
                 texts::tui_marker_inactive()
@@ -2867,10 +2908,11 @@ fn render_mcp(
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(55),
-            Constraint::Length(7),
-            Constraint::Length(7),
-            Constraint::Length(7),
+            Constraint::Percentage(50),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(10),
         ],
     )
     .header(header)
@@ -3540,7 +3582,7 @@ fn render_overlay(frame: &mut Frame<'_>, app: &App, data: &UiData, theme: &super
                 ],
             );
 
-            let labels = ["Claude", "Codex", "Gemini"];
+            let labels = ["Claude", "Codex", "Gemini", "OpenCode"];
             let items = labels
                 .iter()
                 .map(|label| ListItem::new(Line::from(Span::raw(label.to_string()))));
@@ -3880,6 +3922,7 @@ fn render_overlay(frame: &mut Frame<'_>, app: &App, data: &UiData, theme: &super
                 crate::app_config::AppType::Claude,
                 crate::app_config::AppType::Codex,
                 crate::app_config::AppType::Gemini,
+                crate::app_config::AppType::OpenCode,
             ]
             .into_iter()
             .map(|app_type| {
@@ -4962,9 +5005,96 @@ mod tests {
         let buf = render(&app, &data);
         let all = all_text(&buf);
 
-        assert!(all.contains(&texts::tui_skills_installed_counts(1, 0, 0)));
+        assert!(all.contains(&texts::tui_skills_installed_counts(1, 0, 0, 0)));
         assert!(all.contains("hello-skill"));
         assert!(all.contains("Hello Skill"));
+    }
+
+    #[test]
+    fn skills_page_shows_opencode_summary() {
+        let _lock = lock_env();
+        let _no_color = EnvGuard::remove("NO_COLOR");
+
+        let mut app = App::new(Some(AppType::OpenCode));
+        app.route = Route::Skills;
+        app.focus = Focus::Content;
+
+        let mut data = minimal_data(&app.app_type);
+        let mut skill = installed_skill("hello-skill", "Hello Skill");
+        skill.apps = SkillApps {
+            claude: false,
+            codex: false,
+            gemini: false,
+            opencode: true,
+        };
+        data.skills.installed = vec![skill];
+
+        let buf = render(&app, &data);
+        let all = all_text(&buf);
+
+        assert!(all.contains("OpenCode: 1"));
+    }
+
+    #[test]
+    fn skill_detail_page_shows_opencode_enabled_state() {
+        let _lock = lock_env();
+        let _no_color = EnvGuard::remove("NO_COLOR");
+
+        let mut app = App::new(Some(AppType::OpenCode));
+        app.route = Route::SkillDetail {
+            directory: "hello-skill".to_string(),
+        };
+        app.focus = Focus::Content;
+
+        let mut data = minimal_data(&app.app_type);
+        let mut skill = installed_skill("hello-skill", "Hello Skill");
+        skill.apps = SkillApps {
+            claude: false,
+            codex: false,
+            gemini: false,
+            opencode: true,
+        };
+        data.skills.installed = vec![skill];
+
+        let buf = render(&app, &data);
+        let all = all_text(&buf);
+
+        assert!(all.contains("opencode=true"));
+    }
+
+    #[test]
+    fn mcp_page_renders_opencode_column() {
+        let _lock = lock_env();
+        let _no_color = EnvGuard::remove("NO_COLOR");
+
+        let mut app = App::new(Some(AppType::OpenCode));
+        app.route = Route::Mcp;
+        app.focus = Focus::Content;
+
+        let mut data = minimal_data(&app.app_type);
+        data.mcp.rows = vec![super::super::data::McpRow {
+            id: "m1".to_string(),
+            server: crate::app_config::McpServer {
+                id: "m1".to_string(),
+                name: "Server".to_string(),
+                server: json!({}),
+                apps: crate::app_config::McpApps {
+                    claude: false,
+                    codex: false,
+                    gemini: false,
+                    opencode: true,
+                },
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: vec![],
+            },
+        }];
+
+        let buf = render(&app, &data);
+        let all = all_text(&buf);
+
+        assert!(all.contains("opencode"));
     }
 
     #[test]

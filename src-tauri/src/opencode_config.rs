@@ -92,3 +92,36 @@ pub fn set_typed_provider(id: &str, config: &OpenCodeProviderConfig) -> Result<(
         serde_json::to_value(config).map_err(|source| AppError::JsonSerialize { source })?;
     set_provider(id, value)
 }
+
+pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
+    let config = read_opencode_config()?;
+    Ok(config
+        .get("mcp")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default())
+}
+
+pub fn set_mcp_server(id: &str, server: Value) -> Result<(), AppError> {
+    let mut full_config = read_opencode_config()?;
+
+    if full_config.get("mcp").is_none() {
+        full_config["mcp"] = json!({});
+    }
+
+    if let Some(mcp) = full_config.get_mut("mcp").and_then(Value::as_object_mut) {
+        mcp.insert(id.to_string(), server);
+    }
+
+    write_opencode_config(&full_config)
+}
+
+pub fn remove_mcp_server(id: &str) -> Result<(), AppError> {
+    let mut config = read_opencode_config()?;
+
+    if let Some(mcp) = config.get_mut("mcp").and_then(Value::as_object_mut) {
+        mcp.remove(id);
+    }
+
+    write_opencode_config(&config)
+}
