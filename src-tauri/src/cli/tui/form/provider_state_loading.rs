@@ -198,7 +198,6 @@ fn populate_openclaw_form(form: &mut ProviderAddFormState, provider: &Provider) 
     if let Some(api_key) = provider
         .settings_config
         .get("apiKey")
-        .or_else(|| provider.settings_config.get("api_key"))
         .and_then(|value| value.as_str())
     {
         form.opencode_api_key.set(api_key);
@@ -206,7 +205,6 @@ fn populate_openclaw_form(form: &mut ProviderAddFormState, provider: &Provider) 
     if let Some(base_url) = provider
         .settings_config
         .get("baseUrl")
-        .or_else(|| provider.settings_config.get("base_url"))
         .and_then(|value| value.as_str())
     {
         form.opencode_base_url.set(base_url);
@@ -243,11 +241,7 @@ fn populate_openclaw_form(form: &mut ProviderAddFormState, provider: &Provider) 
         if let Some(name) = model.get("name").and_then(|value| value.as_str()) {
             form.opencode_model_name.set(name);
         }
-        if let Some(context_window) = model
-            .get("contextWindow")
-            .or_else(|| model.get("context_window"))
-            .and_then(|value| value.as_u64())
-        {
+        if let Some(context_window) = model.get("contextWindow").and_then(|value| value.as_u64()) {
             form.opencode_model_context_limit
                 .set(context_window.to_string());
         }

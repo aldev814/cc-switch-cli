@@ -3761,26 +3761,26 @@ mod tests {
     }
 
     #[test]
-    fn openclaw_saved_only_provider_edit_submit_marks_live_sync_as_disabled() {
+    fn openclaw_provider_edit_submit_uses_plain_edit_submit() {
         let mut app = App::new(Some(AppType::OpenClaw));
         app.route = Route::Providers;
         app.focus = Focus::Content;
 
         let mut data = UiData::default();
         data.providers.rows.push(super::super::data::ProviderRow {
-            id: "saved-only".to_string(),
+            id: "p1".to_string(),
             provider: crate::provider::Provider::with_id(
-                "saved-only".to_string(),
-                "Saved Only".to_string(),
+                "p1".to_string(),
+                "Provider One".to_string(),
                 json!({"apiKey":"sk-demo","baseUrl":"https://example.com"}),
                 None,
             ),
             api_url: Some("https://example.com".to_string()),
             is_current: false,
-            is_in_config: false,
+            is_in_config: true,
             is_saved: true,
             is_default_model: false,
-            primary_model_id: Some("saved-model".to_string()),
+            primary_model_id: Some("provider-model".to_string()),
             default_model_id: None,
         });
 
@@ -3792,12 +3792,9 @@ mod tests {
         assert!(matches!(
             submit,
             Action::EditorSubmit {
-                submit: EditorSubmit::ProviderEdit {
-                    id,
-                    sync_to_live: false,
-                },
+                submit: EditorSubmit::ProviderEdit { id },
                 content,
-            } if id == "saved-only" && content.contains("Saved Only")
+            } if id == "p1" && content.contains("Provider One")
         ));
     }
 }

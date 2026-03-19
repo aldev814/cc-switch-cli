@@ -244,8 +244,8 @@ mod openclaw_config_impl;
 use openclaw_config_impl::{
     get_default_model, get_openclaw_config_path, read_openclaw_config, remove_provider,
     scan_openclaw_config_health, set_agents_defaults, set_default_model, set_env_config,
-    set_provider, set_tools_config, OpenClawAgentsDefaults, OpenClawDefaultModel,
-    OpenClawEnvConfig, OpenClawToolsConfig,
+    set_model_catalog, set_provider, set_tools_config, OpenClawAgentsDefaults,
+    OpenClawDefaultModel, OpenClawEnvConfig, OpenClawModelCatalogEntry, OpenClawToolsConfig,
 };
 use settings::{get_settings, update_settings, AppSettings};
 use tempfile::TempDir;
@@ -326,6 +326,11 @@ fn shared_round_trip_boundary_fixture() -> &'static str {
       keep: {
         baseUrl: 'https://keep.example/v1',
         apiKey: 'sk-keep',
+        models: [
+          {
+            id: 'model-primary',
+          },
+        ],
         unknownProviderKey: 'keep-me',
         nestedUnknown: {
           enabled: true,
@@ -333,6 +338,11 @@ fn shared_round_trip_boundary_fixture() -> &'static str {
       },
       other: {
         baseUrl: 'https://other.example/v1',
+        models: [
+          {
+            id: 'model-fallback',
+          },
+        ],
         headers: {
           'X-Other': 'preserve-me',
         },
@@ -856,8 +866,8 @@ fn set_agents_defaults_preserves_sibling_agents_keys() {
     with_fixture(shared_round_trip_boundary_fixture(), |_| {
         set_agents_defaults(&OpenClawAgentsDefaults {
             model: Some(OpenClawDefaultModel {
-                primary: "demo/model-primary".to_string(),
-                fallbacks: vec!["demo/model-fallback".to_string()],
+                primary: "keep/model-primary".to_string(),
+                fallbacks: vec!["other/model-fallback".to_string()],
                 extra: HashMap::from([("reasoningEffort".to_string(), json!("high"))]),
             }),
             models: None,
@@ -869,6 +879,129 @@ fn set_agents_defaults_preserves_sibling_agents_keys() {
         assert_eq!(config["agents"]["defaults"]["timeoutSeconds"], json!(60));
         assert_eq!(config["agents"]["sibling"]["enabled"], json!(true));
         assert_eq!(config["agents"]["sibling"]["retries"], json!(2));
+    });
+}
+
+#[test]
+#[serial]
+fn set_default_model_rejects_dangling_refs_without_changing_text() {
+    let source = r#"{
+  models: {
+    mode: 'merge',
+    providers: {
+      keep: {
+        baseUrl: 'https://keep.example/v1',
+        models: [{ id: 'primary-model' }],
+      },
+    },
+  },
+}
+"#;
+
+    with_fixture(source, |config_path| {
+        let err = set_default_model(&OpenClawDefaultModel {
+            primary: "keep/missing-model".to_string(),
+            fallbacks: vec!["keep/primary-model".to_string()],
+            extra: HashMap::new(),
+        })
+        .expect_err("dangling default-model refs should be rejected");
+
+        match err {
+            crate::error::AppError::Localized { key, .. } => {
+                assert_eq!(key, "openclaw.default_model.provider_model_missing");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let written = fs::read_to_string(config_path)
+            .expect("read config after rejected default-model write");
+        assert_eq!(written, source);
+    });
+}
+
+#[test]
+#[serial]
+fn set_model_catalog_rejects_invalid_reference_format_without_changing_text() {
+    let source = r#"{
+  models: {
+    mode: 'merge',
+    providers: {
+      keep: {
+        baseUrl: 'https://keep.example/v1',
+        models: [{ id: 'primary-model' }],
+      },
+    },
+  },
+}
+"#;
+
+    with_fixture(source, |config_path| {
+        let err = set_model_catalog(&HashMap::from([(
+            "keep/primary-model/extra".to_string(),
+            OpenClawModelCatalogEntry {
+                alias: Some("Broken".to_string()),
+                extra: HashMap::new(),
+            },
+        )]))
+        .expect_err("invalid model catalog refs should be rejected");
+
+        match err {
+            crate::error::AppError::Localized { key, .. } => {
+                assert_eq!(key, "openclaw.default_model.invalid_reference");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let written = fs::read_to_string(config_path)
+            .expect("read config after rejected model-catalog write");
+        assert_eq!(written, source);
+    });
+}
+
+#[test]
+#[serial]
+fn set_agents_defaults_rejects_dangling_model_catalog_refs_without_changing_text() {
+    let source = r#"{
+  models: {
+    mode: 'merge',
+    providers: {
+      keep: {
+        baseUrl: 'https://keep.example/v1',
+        models: [{ id: 'primary-model' }],
+      },
+    },
+  },
+}
+"#;
+
+    with_fixture(source, |config_path| {
+        let err = set_agents_defaults(&OpenClawAgentsDefaults {
+            model: Some(OpenClawDefaultModel {
+                primary: "keep/primary-model".to_string(),
+                fallbacks: Vec::new(),
+                extra: HashMap::new(),
+            }),
+            models: Some(HashMap::from([(
+                "missing/fallback-model".to_string(),
+                OpenClawModelCatalogEntry {
+                    alias: Some("Fallback".to_string()),
+                    extra: HashMap::new(),
+                },
+            )])),
+            extra: HashMap::new(),
+        })
+        .expect_err("dangling agents.defaults.models refs should be rejected");
+
+        match err {
+            crate::error::AppError::Localized { key, .. } => {
+                assert_eq!(key, "openclaw.default_model.provider_missing");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let written = fs::read_to_string(config_path)
+            .expect("read config after rejected agents.defaults write");
+        assert_eq!(written, source);
     });
 }
 

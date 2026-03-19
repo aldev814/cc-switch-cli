@@ -903,19 +903,22 @@ pub fn get_default_model() -> Result<Option<OpenClawDefaultModel>, AppError> {
 
 pub fn set_default_model(model: &OpenClawDefaultModel) -> Result<OpenClawWriteOutcome, AppError> {
     let mut config = read_openclaw_config()?;
-    let root = ensure_object(&mut config);
-    let agents = root
-        .entry("agents".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    let defaults = ensure_object(agents)
-        .entry("defaults".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-
     let model_value =
         serde_json::to_value(model).map_err(|source| AppError::JsonSerialize { source })?;
-    ensure_object(defaults).insert("model".to_string(), model_value);
+    {
+        let root = ensure_object(&mut config);
+        let agents = root
+            .entry("agents".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        let defaults = ensure_object(agents)
+            .entry("defaults".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        ensure_object(defaults).insert("model".to_string(), model_value);
+    }
 
-    let agents_value = root
+    reject_dangling_default_model_refs(&config)?;
+
+    let agents_value = config
         .get("agents")
         .cloned()
         .unwrap_or_else(|| Value::Object(Map::new()));
@@ -969,19 +972,22 @@ pub fn set_model_catalog(
     catalog: &HashMap<String, OpenClawModelCatalogEntry>,
 ) -> Result<OpenClawWriteOutcome, AppError> {
     let mut config = read_openclaw_config()?;
-    let root = ensure_object(&mut config);
-    let agents = root
-        .entry("agents".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    let defaults = ensure_object(agents)
-        .entry("defaults".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-
     let catalog_value =
         serde_json::to_value(catalog).map_err(|source| AppError::JsonSerialize { source })?;
-    ensure_object(defaults).insert("models".to_string(), catalog_value);
+    {
+        let root = ensure_object(&mut config);
+        let agents = root
+            .entry("agents".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        let defaults = ensure_object(agents)
+            .entry("defaults".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        ensure_object(defaults).insert("models".to_string(), catalog_value);
+    }
 
-    let agents_value = root
+    reject_dangling_default_model_refs(&config)?;
+
+    let agents_value = config
         .get("agents")
         .cloned()
         .unwrap_or_else(|| Value::Object(Map::new()));
@@ -1007,17 +1013,20 @@ pub fn set_agents_defaults(
     defaults: &OpenClawAgentsDefaults,
 ) -> Result<OpenClawWriteOutcome, AppError> {
     let mut config = read_openclaw_config()?;
-    let root = ensure_object(&mut config);
-    let agents = root
-        .entry("agents".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-
     let mut defaults_value =
         serde_json::to_value(defaults).map_err(|source| AppError::JsonSerialize { source })?;
     remove_legacy_timeout(&mut defaults_value);
-    ensure_object(agents).insert("defaults".to_string(), defaults_value);
+    {
+        let root = ensure_object(&mut config);
+        let agents = root
+            .entry("agents".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        ensure_object(agents).insert("defaults".to_string(), defaults_value);
+    }
 
-    let agents_value = root
+    reject_dangling_default_model_refs(&config)?;
+
+    let agents_value = config
         .get("agents")
         .cloned()
         .unwrap_or_else(|| Value::Object(Map::new()));
@@ -1415,6 +1424,10 @@ mod tests {
       demo: {
         baseUrl: 'https://demo.test/v1',
         apiKey: 'sk-demo',
+        models: [
+          { id: 'gpt-4.1' },
+          { id: 'gpt-4.1-mini' },
+        ],
       },
     },
   },
@@ -1553,7 +1566,11 @@ mod tests {
   // top-level comment
   models: {
     mode: 'merge',
-    providers: {},
+    providers: {
+      provider: {
+        models: [{ id: 'model' }],
+      },
+    },
   },
 }
 "#;
@@ -1582,7 +1599,14 @@ mod tests {
         let source = r#"{
   models: {
     mode: 'merge',
-    providers: {},
+    providers: {
+      provider: {
+        models: [
+          { id: 'model' },
+          { id: 'fallback' },
+        ],
+      },
+    },
   },
 }
 "#;
@@ -1638,7 +1662,16 @@ mod tests {
             r#"{
   models: {
     mode: 'merge',
-    providers: {},
+    providers: {
+      provider: {
+        models: [
+          { id: 'model-0' },
+          { id: 'model-1' },
+          { id: 'model-2' },
+          { id: 'model-3' },
+        ],
+      },
+    },
   },
 }
 "#,
@@ -1693,7 +1726,14 @@ mod tests {
         let source = r#"{
   models: {
     mode: 'merge',
-    providers: {},
+    providers: {
+      demo: {
+        models: [
+          { id: 'model-primary' },
+          { id: 'model-fallback' },
+        ],
+      },
+    },
   },
   agents: {
     defaults: {
@@ -1746,7 +1786,14 @@ mod tests {
         let source = r#"{
   models: {
     mode: 'merge',
-    providers: {},
+    providers: {
+      demo: {
+        models: [
+          { id: 'model-primary' },
+          { id: 'model-fallback' },
+        ],
+      },
+    },
   },
 }
 "#;

@@ -5,10 +5,8 @@ use super::*;
 fn openclaw_status_label(row: &ProviderRow) -> &'static str {
     if row.is_default_model {
         texts::tui_openclaw_status_default()
-    } else if row.is_in_config && row.is_saved {
-        texts::tui_openclaw_status_in_config_and_saved()
     } else if row.is_in_config {
-        texts::tui_openclaw_status_live_only()
+        texts::tui_openclaw_status_in_config_and_saved()
     } else if row.is_saved {
         texts::tui_openclaw_status_saved_only()
     } else {
@@ -69,9 +67,7 @@ pub(super) fn render_providers(
                 ("t", texts::tui_key_speedtest()),
             ]);
             if let Some(row) = visible.get(app.provider_idx) {
-                if row.is_in_config || row.is_saved {
-                    keys.push(("e", texts::tui_key_edit()));
-                }
+                keys.push(("e", texts::tui_key_edit()));
                 if row.is_in_config {
                     keys.push(("x", texts::tui_key_set_default()));
                 }
@@ -100,12 +96,8 @@ pub(super) fn render_providers(
         let marker = if matches!(app.app_type, crate::app_config::AppType::OpenClaw) {
             if row.is_default_model {
                 "*"
-            } else if row.is_in_config && !row.is_saved {
-                "~"
-            } else if row.is_in_config {
-                "+"
             } else {
-                texts::tui_marker_inactive()
+                "+"
             }
         } else if row.is_current {
             texts::tui_marker_active()
@@ -177,13 +169,11 @@ pub(super) fn render_provider_detail(
 
     if app.focus == Focus::Content {
         let mut keys = if matches!(app.app_type, crate::app_config::AppType::OpenClaw) {
-            let mut keys = vec![
+            let keys = vec![
                 ("s", texts::tui_key_add_remove()),
+                ("e", texts::tui_key_edit()),
                 ("t", texts::tui_key_speedtest()),
             ];
-            if row.is_in_config || row.is_saved {
-                keys.push(("e", texts::tui_key_edit()));
-            }
             keys
         } else {
             vec![

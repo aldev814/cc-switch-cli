@@ -268,7 +268,6 @@ pub enum McpAddField {
 pub struct ProviderAddFormState {
     pub app_type: AppType,
     pub mode: FormMode,
-    pub sync_edit_to_live: bool,
     pub focus: FormFocus,
     pub template_idx: usize,
     pub field_idx: usize,

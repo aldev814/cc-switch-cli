@@ -331,7 +331,6 @@ impl ProviderAddFormState {
                 let mut models = if self.openclaw_models.is_empty() {
                     match settings_obj.remove("models") {
                         Some(Value::Array(items)) => items,
-                        Some(Value::Object(map)) => vec![Value::Object(map)],
                         _ => Vec::new(),
                     }
                 } else {

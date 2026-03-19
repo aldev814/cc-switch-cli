@@ -42,9 +42,7 @@ pub(super) fn submit(
             submit_provider_form_apply_codex_config_toml(ctx, content)
         }
         EditorSubmit::ProviderAdd => submit_provider_add(ctx, content),
-        EditorSubmit::ProviderEdit { id, sync_to_live } => {
-            submit_provider_edit(ctx, id, sync_to_live, content)
-        }
+        EditorSubmit::ProviderEdit { id } => submit_provider_edit(ctx, id, content),
         EditorSubmit::McpAdd => submit_mcp_add(ctx, content),
         EditorSubmit::McpEdit { id } => submit_mcp_edit(ctx, id, content),
         EditorSubmit::ConfigCommonSnippet { app_type } => {
@@ -443,7 +441,6 @@ fn submit_provider_add(
 fn submit_provider_edit(
     ctx: &mut RuntimeActionContext<'_>,
     id: String,
-    _sync_to_live: bool,
     content: String,
 ) -> Result<(), AppError> {
     let mut provider: Provider = match serde_json::from_str(&content) {
@@ -465,23 +462,7 @@ fn submit_provider_edit(
     }
 
     let state = load_state()?;
-    let openclaw_row = if matches!(ctx.app.app_type, AppType::OpenClaw) {
-        ctx.data
-            .providers
-            .rows
-            .iter()
-            .find(|row| row.id == id)
-            .map(|row| (row.is_saved, row.is_in_config))
-    } else {
-        None
-    };
-
-    let result = match (ctx.app.app_type.clone(), openclaw_row) {
-        (AppType::OpenClaw, Some((false, true))) => {
-            ProviderService::add(&state, AppType::OpenClaw, provider)
-        }
-        (app_type, _) => ProviderService::update(&state, app_type, provider),
-    };
+    let result = ProviderService::update(&state, ctx.app.app_type.clone(), provider);
 
     if let Err(err) = result {
         ctx.app.push_toast(err.to_string(), ToastKind::Error);
@@ -878,7 +859,70 @@ mod tests {
 
     #[test]
     #[serial(home_settings)]
-    fn submit_provider_edit_imports_openclaw_live_only_provider_into_snapshot() {
+    fn submit_provider_add_preserves_custom_openclaw_name_after_reload() {
+        let home_dir = tempdir().expect("create temp home");
+        let openclaw_dir = tempdir().expect("create temp openclaw dir");
+        let _home = EnvGuard::set_home(home_dir.path());
+        let _settings = SettingsGuard::with_openclaw_dir(openclaw_dir.path());
+
+        let mut terminal = TuiTerminal::new_for_test().expect("create test terminal");
+        let mut app = App::new(Some(AppType::OpenClaw));
+        let mut data = UiData::load(&AppType::OpenClaw).expect("load openclaw ui data");
+
+        let mut proxy_loading = RequestTracker::default();
+        let mut webdav_loading = RequestTracker::default();
+        let mut update_check = RequestTracker::default();
+        let mut ctx = RuntimeActionContext {
+            terminal: &mut terminal,
+            app: &mut app,
+            data: &mut data,
+            speedtest_req_tx: None,
+            stream_check_req_tx: None,
+            skills_req_tx: None,
+            proxy_req_tx: None,
+            proxy_loading: &mut proxy_loading,
+            local_env_req_tx: None,
+            webdav_req_tx: None,
+            webdav_loading: &mut webdav_loading,
+            update_req_tx: None,
+            update_check: &mut update_check,
+            model_fetch_req_tx: None,
+        };
+
+        submit_provider_add(
+            &mut ctx,
+            r#"{
+  "id": "",
+  "name": "Friendly OpenClaw",
+  "settingsConfig": {
+    "apiKey": "sk-friendly",
+    "baseUrl": "https://friendly.example/v1",
+    "models": [
+      { "id": "friendly-model", "name": "Friendly Model" }
+    ]
+  }
+}"#
+            .to_string(),
+        )
+        .expect("submit should succeed");
+
+        let refreshed = UiData::load(&AppType::OpenClaw).expect("reload openclaw ui data");
+        let refreshed_row = refreshed
+            .providers
+            .rows
+            .iter()
+            .find(|row| row.id == "friendly-openclaw")
+            .expect("provider row should still exist after reload");
+        assert_eq!(refreshed_row.provider.name, "Friendly OpenClaw");
+        assert!(
+            refreshed_row.provider.created_at.is_some(),
+            "adding an OpenClaw provider through the add flow should persist a user-touched marker"
+        );
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn submit_provider_edit_updates_openclaw_live_backed_provider() {
         let home_dir = tempdir().expect("create temp home");
         let openclaw_dir = tempdir().expect("create temp openclaw dir");
         let _home = EnvGuard::set_home(home_dir.path());
@@ -907,8 +951,8 @@ mod tests {
             data.providers
                 .rows
                 .iter()
-                .any(|row| row.id == "live-only" && !row.is_saved && row.is_in_config),
-            "precondition: UI should expose the live-only provider before edit submit"
+                .any(|row| row.id == "live-only" && row.is_saved && row.is_in_config),
+            "precondition: UI should mirror the live provider into the local manager before edit submit"
         );
 
         let mut proxy_loading = RequestTracker::default();
@@ -934,7 +978,6 @@ mod tests {
         submit_provider_edit(
             &mut ctx,
             "live-only".to_string(),
-            true,
             r#"{
   "id": "live-only",
   "name": "Live Only Imported",
@@ -956,8 +999,8 @@ mod tests {
                 .providers
                 .rows
                 .iter()
-                .any(|row| row.id == "live-only" && row.is_saved),
-            "editing a live-only provider should import it into the saved snapshot"
+                .any(|row| row.id == "live-only" && row.is_saved && row.is_in_config),
+            "editing an OpenClaw provider should keep the mirrored row in sync"
         );
         assert_eq!(
             crate::openclaw_config::get_provider("live-only")
@@ -972,7 +1015,98 @@ mod tests {
 
     #[test]
     #[serial(home_settings)]
-    fn submit_provider_edit_updates_saved_only_openclaw_snapshot_without_touching_live_config() {
+    fn submit_provider_edit_preserves_custom_openclaw_name_after_reload() {
+        let home_dir = tempdir().expect("create temp home");
+        let openclaw_dir = tempdir().expect("create temp openclaw dir");
+        let _home = EnvGuard::set_home(home_dir.path());
+        let _settings = SettingsGuard::with_openclaw_dir(openclaw_dir.path());
+
+        write_openclaw_config_source(
+            r#"{
+  models: {
+    mode: 'merge',
+    providers: {
+      'live-only': {
+        apiKey: 'sk-live',
+        baseUrl: 'https://live.example/v1',
+        models: [{ id: 'live-model', name: 'Live Model' }],
+      },
+    },
+  },
+}"#,
+        )
+        .expect("seed live-only openclaw provider");
+
+        let mut terminal = TuiTerminal::new_for_test().expect("create test terminal");
+        let mut app = App::new(Some(AppType::OpenClaw));
+        let mut data = UiData::load(&AppType::OpenClaw).expect("load openclaw ui data");
+        let initial_row = data
+            .providers
+            .rows
+            .iter()
+            .find(|row| row.id == "live-only")
+            .expect("mirrored provider row should exist before edit");
+        assert_eq!(initial_row.provider.name, "live-only");
+        assert!(initial_row.provider.created_at.is_none());
+
+        let mut proxy_loading = RequestTracker::default();
+        let mut webdav_loading = RequestTracker::default();
+        let mut update_check = RequestTracker::default();
+        let mut ctx = RuntimeActionContext {
+            terminal: &mut terminal,
+            app: &mut app,
+            data: &mut data,
+            speedtest_req_tx: None,
+            stream_check_req_tx: None,
+            skills_req_tx: None,
+            proxy_req_tx: None,
+            proxy_loading: &mut proxy_loading,
+            local_env_req_tx: None,
+            webdav_req_tx: None,
+            webdav_loading: &mut webdav_loading,
+            update_req_tx: None,
+            update_check: &mut update_check,
+            model_fetch_req_tx: None,
+        };
+
+        submit_provider_edit(
+            &mut ctx,
+            "live-only".to_string(),
+            r#"{
+  "id": "live-only",
+  "name": "Live Only Custom",
+  "meta": {
+    "applyCommonConfig": false
+  },
+  "settingsConfig": {
+    "apiKey": "sk-live",
+    "baseUrl": "https://live.example/v1",
+    "models": [
+      { "id": "live-model", "name": "Live Model" }
+    ]
+  }
+}"#
+            .to_string(),
+        )
+        .expect("submit should succeed");
+
+        let refreshed = UiData::load(&AppType::OpenClaw).expect("reload openclaw ui data");
+        let refreshed_row = refreshed
+            .providers
+            .rows
+            .iter()
+            .find(|row| row.id == "live-only")
+            .expect("provider row should still exist after reload");
+        assert_eq!(refreshed_row.provider.name, "Live Only Custom");
+        assert!(
+            refreshed_row.provider.created_at.is_some(),
+            "saving a mirrored OpenClaw provider through the edit flow should persist a user-touched marker"
+        );
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn submit_provider_edit_hides_saved_only_openclaw_snapshot_rows() {
         let home_dir = tempdir().expect("create temp home");
         let openclaw_dir = tempdir().expect("create temp openclaw dir");
         let _home = EnvGuard::set_home(home_dir.path());
@@ -1023,83 +1157,16 @@ mod tests {
         }
         state.save().expect("persist saved-only provider snapshot");
 
-        let original_live =
-            std::fs::read_to_string(crate::openclaw_config::get_openclaw_config_path())
-                .expect("read original live config");
-        let mut terminal = TuiTerminal::new_for_test().expect("create test terminal");
-        let mut app = App::new(Some(AppType::OpenClaw));
-        let mut data = UiData::load(&AppType::OpenClaw).expect("load openclaw ui data");
+        let data = UiData::load(&AppType::OpenClaw).expect("load openclaw ui data");
         assert!(
-            data.providers
-                .rows
-                .iter()
-                .any(|row| row.id == "saved-only" && row.is_saved && !row.is_in_config),
-            "precondition: UI should expose the saved-only provider before edit submit"
-        );
-
-        let mut proxy_loading = RequestTracker::default();
-        let mut webdav_loading = RequestTracker::default();
-        let mut update_check = RequestTracker::default();
-        let mut ctx = RuntimeActionContext {
-            terminal: &mut terminal,
-            app: &mut app,
-            data: &mut data,
-            speedtest_req_tx: None,
-            stream_check_req_tx: None,
-            skills_req_tx: None,
-            proxy_req_tx: None,
-            proxy_loading: &mut proxy_loading,
-            local_env_req_tx: None,
-            webdav_req_tx: None,
-            webdav_loading: &mut webdav_loading,
-            update_req_tx: None,
-            update_check: &mut update_check,
-            model_fetch_req_tx: None,
-        };
-
-        submit_provider_edit(
-            &mut ctx,
-            "saved-only".to_string(),
-            false,
-            r#"{
-  "id": "saved-only",
-  "name": "Saved Only Updated",
-  "settingsConfig": {
-    "apiKey": "sk-saved-new",
-    "baseUrl": "https://saved.new.example/v1",
-    "models": [
-      { "id": "saved-model-new" }
-    ]
-  }
-}"#
-            .to_string(),
-        )
-        .expect("submit should succeed");
-
-        let refreshed = UiData::load(&AppType::OpenClaw).expect("reload openclaw ui data");
-        let saved_row = refreshed
-            .providers
-            .rows
-            .iter()
-            .find(|row| row.id == "saved-only")
-            .expect("saved-only row should still exist");
-        assert_eq!(saved_row.provider.name, "Saved Only Updated");
-        assert_eq!(
-            saved_row.provider.settings_config["baseUrl"],
-            json!("https://saved.new.example/v1")
-        );
-        let live_after =
-            std::fs::read_to_string(crate::openclaw_config::get_openclaw_config_path())
-                .expect("read live config after saved-only edit");
-        assert_eq!(
-            live_after, original_live,
-            "saved-only edit should stay in the snapshot layer and leave openclaw.json untouched"
+            data.providers.rows.iter().all(|row| row.id != "saved-only"),
+            "saved-only snapshot rows should disappear once the OpenClaw manager mirrors live config"
         );
     }
 
     #[test]
     #[serial(home_settings)]
-    fn submit_provider_edit_rejects_invalid_usage_script_for_saved_only_openclaw_provider() {
+    fn submit_provider_edit_rejects_invalid_usage_script_for_openclaw_provider() {
         let home_dir = tempdir().expect("create temp home");
         let openclaw_dir = tempdir().expect("create temp openclaw dir");
         let _home = EnvGuard::set_home(home_dir.path());
@@ -1128,20 +1195,20 @@ mod tests {
                 .get_manager_mut(&AppType::OpenClaw)
                 .expect("openclaw manager");
             manager.providers.insert(
-                "saved-only".to_string(),
+                "keep".to_string(),
                 Provider::with_id(
-                    "saved-only".to_string(),
-                    "Saved Only".to_string(),
+                    "keep".to_string(),
+                    "Keep".to_string(),
                     json!({
-                        "apiKey": "sk-saved-old",
-                        "baseUrl": "https://saved.old.example/v1",
-                        "models": [{ "id": "saved-model-old" }]
+                        "apiKey": "sk-keep",
+                        "baseUrl": "https://keep.example/v1",
+                        "models": [{ "id": "keep-model" }]
                     }),
                     None,
                 ),
             );
         }
-        state.save().expect("persist saved-only provider snapshot");
+        state.save().expect("persist mirrored provider state");
 
         let original_live =
             std::fs::read_to_string(crate::openclaw_config::get_openclaw_config_path())
@@ -1153,8 +1220,8 @@ mod tests {
             data.providers
                 .rows
                 .iter()
-                .any(|row| row.id == "saved-only" && row.is_saved && !row.is_in_config),
-            "precondition: UI should expose the saved-only provider before edit submit"
+                .any(|row| row.id == "keep" && row.is_saved && row.is_in_config),
+            "precondition: UI should expose the mirrored provider before edit submit"
         );
 
         let mut proxy_loading = RequestTracker::default();
@@ -1179,16 +1246,15 @@ mod tests {
 
         submit_provider_edit(
             &mut ctx,
-            "saved-only".to_string(),
-            false,
+            "keep".to_string(),
             r#"{
-  "id": "saved-only",
-  "name": "Saved Only Invalid",
+  "id": "keep",
+  "name": "Keep Invalid",
   "settingsConfig": {
-    "apiKey": "sk-saved-new",
-    "baseUrl": "https://saved.new.example/v1",
+    "apiKey": "sk-keep-new",
+    "baseUrl": "https://keep.new.example/v1",
     "models": [
-      { "id": "saved-model-new" }
+      { "id": "keep-model-new" }
     ]
   },
   "meta": {
@@ -1216,7 +1282,7 @@ mod tests {
                 .toast
                 .as_ref()
                 .is_some_and(|toast| toast.message.contains("1440")),
-            "saved-only OpenClaw edits should surface usage_script validation errors"
+            "OpenClaw edits should surface usage_script validation errors"
         );
 
         let refreshed = UiData::load(&AppType::OpenClaw).expect("reload openclaw ui data");
@@ -1224,20 +1290,20 @@ mod tests {
             .providers
             .rows
             .iter()
-            .find(|row| row.id == "saved-only")
-            .expect("saved-only row should still exist");
-        assert_eq!(saved_row.provider.name, "Saved Only");
+            .find(|row| row.id == "keep")
+            .expect("provider row should still exist");
+        assert_eq!(saved_row.provider.name, "Keep");
         assert_eq!(
             saved_row.provider.settings_config["baseUrl"],
-            json!("https://saved.old.example/v1"),
-            "invalid saved-only edits should not persist the attempted provider update"
+            json!("https://keep.example/v1"),
+            "invalid OpenClaw edits should not persist the attempted provider update"
         );
         let live_after =
             std::fs::read_to_string(crate::openclaw_config::get_openclaw_config_path())
                 .expect("read live config after rejected saved-only edit");
         assert_eq!(
             live_after, original_live,
-            "rejected saved-only edits should leave openclaw.json untouched"
+            "rejected OpenClaw edits should leave openclaw.json untouched"
         );
     }
 
@@ -1490,6 +1556,17 @@ mod tests {
     #[serial(home_settings)]
     fn openclaw_config_route_agents_editor_submit_saves_and_reloads_ui_data() {
         let initial_source = r#"{
+  models: {
+    mode: 'merge',
+    providers: {
+      demo: {
+        models: [
+          { id: 'gpt-4.1' },
+          { id: 'gpt-4o-mini' },
+        ],
+      },
+    },
+  },
   agents: {
     defaults: {
       timeout: 42,
@@ -1501,11 +1578,11 @@ mod tests {
 }"#;
         let edited_content = r#"{
   "model": {
-    "primary": "gpt-4.1",
-    "fallbacks": ["gpt-4o-mini"]
+    "primary": "demo/gpt-4.1",
+    "fallbacks": ["demo/gpt-4o-mini"]
   },
   "models": {
-    "gpt-4.1": {
+    "demo/gpt-4.1": {
       "alias": "General"
     }
   }
@@ -1537,14 +1614,14 @@ mod tests {
                 .as_ref()
                 .and_then(|defaults| defaults.model.as_ref())
                 .map(|model| model.primary.as_str()),
-            Some("gpt-4.1")
+            Some("demo/gpt-4.1")
         );
         assert_eq!(
             data.config
                 .openclaw_agents_defaults
                 .as_ref()
                 .and_then(|defaults| defaults.models.as_ref())
-                .and_then(|models| models.get("gpt-4.1")),
+                .and_then(|models| models.get("demo/gpt-4.1")),
             Some(&OpenClawModelCatalogEntry {
                 alias: Some("General".to_string()),
                 extra: HashMap::new(),
@@ -1637,6 +1714,16 @@ mod tests {
     #[serial(home_settings)]
     fn openclaw_config_route_agents_entry_from_config_menu_saves_and_clears_warning() {
         let initial_source = r#"{
+  models: {
+    mode: 'merge',
+    providers: {
+      demo: {
+        models: [
+          { id: 'gpt-4.1' },
+        ],
+      },
+    },
+  },
   agents: {
     defaults: {
       timeout: 42,
@@ -1648,7 +1735,7 @@ mod tests {
 }"#;
         let edited_content = r#"{
   "model": {
-    "primary": "gpt-4.1"
+    "primary": "demo/gpt-4.1"
   }
 }"#;
 
@@ -1671,7 +1758,7 @@ mod tests {
                 .as_ref()
                 .and_then(|defaults| defaults.model.as_ref())
                 .map(|model| model.primary.as_str()),
-            Some("gpt-4.1")
+            Some("demo/gpt-4.1")
         );
         let warnings = data.config.openclaw_warnings.clone().unwrap_or_default();
         assert!(!warnings

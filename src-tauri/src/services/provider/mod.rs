@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 mod claude;
 mod codex;
 #[cfg(test)]
@@ -38,6 +40,13 @@ use common::{
 /// 供应商相关业务逻辑
 pub struct ProviderService;
 
+fn current_timestamp() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
 #[cfg(test)]
 fn state_from_config(config: MultiAppConfig) -> AppState {
     let db = std::sync::Arc::new(crate::Database::memory().expect("create memory database"));
@@ -60,6 +69,35 @@ struct PostCommitAction {
 }
 
 impl ProviderService {
+    pub(crate) fn valid_openclaw_live_provider_ids() -> Result<Option<HashSet<String>>, AppError> {
+        if !crate::openclaw_config::get_openclaw_config_path().exists() {
+            return Ok(None);
+        }
+
+        let mut valid_provider_ids = HashSet::new();
+        for (provider_id, live_provider) in crate::openclaw_config::get_providers()? {
+            if provider_id.trim().is_empty() {
+                continue;
+            }
+
+            let Ok(config) = Self::parse_openclaw_provider_settings(&live_provider) else {
+                continue;
+            };
+
+            if Self::validate_openclaw_provider_models(&provider_id, &config).is_err() {
+                continue;
+            }
+
+            if config.models.iter().any(|model| model.id.trim().is_empty()) {
+                continue;
+            }
+
+            valid_provider_ids.insert(provider_id);
+        }
+
+        Ok(Some(valid_provider_ids))
+    }
+
     fn parse_common_opencode_config_snippet(snippet: &str) -> Result<Value, AppError> {
         let value: Value = serde_json::from_str(snippet).map_err(|e| {
             AppError::localized(
@@ -829,6 +867,11 @@ impl ProviderService {
         Ok(manager.get_all_providers().clone())
     }
 
+    pub(crate) fn sync_openclaw_providers_from_live(state: &AppState) -> Result<(), AppError> {
+        live::sync_openclaw_providers_from_live(state)?;
+        Ok(())
+    }
+
     /// 获取当前供应商 ID
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
         if app_type.is_additive_mode() {
@@ -880,6 +923,13 @@ impl ProviderService {
                 &mut provider_to_store,
                 common_config_snippet.as_deref(),
             )?;
+
+            if matches!(app_type_clone, AppType::OpenClaw)
+                && provider_to_store.created_at.is_none()
+                && live::is_auto_mirrored_openclaw_snapshot(&provider_to_store)
+            {
+                provider_to_store.created_at = Some(current_timestamp());
+            }
 
             config.ensure_app(&app_type_clone);
             let previous_current = config
@@ -978,24 +1028,7 @@ impl ProviderService {
                 ));
             }
 
-            let is_current = if matches!(app_type_clone, AppType::OpenClaw) {
-                match crate::openclaw_config::get_provider(&provider_id) {
-                    Ok(Some(_)) => true,
-                    Ok(None) => false,
-                    Err(AppError::Config(message))
-                        if message.starts_with("Failed to parse OpenClaw config as JSON5:") =>
-                    {
-                        log::warn!(
-                            "skip OpenClaw live membership detection for provider '{}' because openclaw.json is not parseable; treating update as snapshot-only",
-                            provider_id
-                        );
-                        false
-                    }
-                    Err(err) => return Err(err),
-                }
-            } else {
-                app_type_clone.is_additive_mode() || manager.current == provider_id
-            };
+            let is_current = app_type_clone.is_additive_mode() || manager.current == provider_id;
             let mut merged = if let Some(existing) = manager.providers.get(&provider_id) {
                 let mut updated = provider_clone.clone();
                 match (existing.meta.as_ref(), updated.meta.take()) {
@@ -1010,6 +1043,12 @@ impl ProviderService {
                     (_old, Some(new_meta)) => {
                         updated.meta = Some(new_meta);
                     }
+                }
+                if matches!(app_type_clone, AppType::OpenClaw)
+                    && updated.created_at.is_none()
+                    && live::is_auto_mirrored_openclaw_snapshot(&updated)
+                {
+                    updated.created_at = Some(current_timestamp());
                 }
                 updated
             } else {
@@ -1368,13 +1407,8 @@ impl ProviderService {
             result
         };
 
-        let openclaw_live_provider_ids = match crate::openclaw_config::get_providers() {
-            Ok(providers) => Some(
-                providers
-                    .into_iter()
-                    .map(|(provider_id, _)| provider_id)
-                    .collect::<std::collections::HashSet<_>>(),
-            ),
+        let openclaw_live_provider_ids = match Self::valid_openclaw_live_provider_ids() {
+            Ok(provider_ids) => provider_ids,
             Err(err) => {
                 log::warn!(
                     "sync_current_to_live: 读取 OpenClaw live providers 失败，跳过 OpenClaw 同步: {err}"
@@ -1583,15 +1617,101 @@ impl ProviderService {
                     return Ok(());
                 }
 
-                match serde_json::from_value::<crate::provider::OpenClawProviderConfig>(
-                    settings_config.clone(),
-                ) {
-                    Ok(config) => crate::openclaw_config::set_typed_provider(&provider.id, &config)
-                        .map(|_| ()),
-                    Err(_) => crate::openclaw_config::set_provider(&provider.id, settings_config)
-                        .map(|_| ()),
+                let config = Self::parse_openclaw_provider_settings(&settings_config)?;
+                Self::validate_openclaw_provider_models(&provider.id, &config)?;
+                let write_result =
+                    crate::openclaw_config::set_typed_provider(&provider.id, &config).map(|_| ());
+
+                write_result.map_err(Self::normalize_openclaw_live_write_error)
+            }
+        }
+    }
+
+    fn parse_openclaw_provider_settings(
+        settings_config: &Value,
+    ) -> Result<crate::provider::OpenClawProviderConfig, AppError> {
+        let settings_obj = settings_config.as_object().ok_or_else(|| {
+            AppError::localized(
+                "provider.openclaw.settings.not_object",
+                "OpenClaw 配置必须是 JSON 对象",
+                "OpenClaw configuration must be a JSON object",
+            )
+        })?;
+
+        let legacy_aliases = Self::collect_openclaw_legacy_aliases(settings_obj);
+        if !legacy_aliases.is_empty() {
+            let aliases = legacy_aliases.join(", ");
+            return Err(AppError::localized(
+                "provider.openclaw.settings.invalid",
+                format!(
+                    "OpenClaw 配置使用了不支持的旧字段: {aliases}。请改用规范 OpenClaw 字段。"
+                ),
+                format!(
+                    "OpenClaw config uses unsupported legacy alias keys: {aliases}. Use canonical OpenClaw keys instead."
+                ),
+            ));
+        }
+
+        serde_json::from_value(settings_config.clone()).map_err(|err| {
+            AppError::localized(
+                "provider.openclaw.settings.invalid",
+                format!("OpenClaw 配置格式无效: {err}"),
+                format!("OpenClaw provider schema is invalid: {err}"),
+            )
+        })
+    }
+
+    fn validate_openclaw_provider_models(
+        provider_id: &str,
+        config: &crate::provider::OpenClawProviderConfig,
+    ) -> Result<(), AppError> {
+        if config.models.is_empty() {
+            return Err(AppError::localized(
+                "provider.openclaw.models.missing",
+                format!("OpenClaw 供应商 {provider_id} 至少需要一个模型"),
+                format!("OpenClaw provider {provider_id} must define at least one model"),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn collect_openclaw_legacy_aliases(
+        settings_obj: &serde_json::Map<String, Value>,
+    ) -> Vec<String> {
+        let mut aliases = Vec::new();
+
+        for alias in ["api_key", "base_url", "options", "npm"] {
+            if settings_obj.contains_key(alias) {
+                aliases.push(alias.to_string());
+            }
+        }
+
+        if let Some(models) = settings_obj.get("models").and_then(Value::as_array) {
+            for (index, model) in models.iter().enumerate() {
+                if let Some(model_obj) = model.as_object() {
+                    if model_obj.contains_key("context_window") {
+                        aliases.push(format!("models[{index}].context_window"));
+                    }
                 }
             }
+        }
+
+        aliases
+    }
+
+    fn normalize_openclaw_live_write_error(err: AppError) -> AppError {
+        match err {
+            AppError::Config(message)
+                if message.starts_with("Failed to parse OpenClaw config as JSON5:") =>
+            {
+                AppError::Config(message.replacen(
+                    "Failed to parse OpenClaw config as JSON5",
+                    "Failed to parse OpenClaw config as round-trip JSON5 document",
+                    1,
+                ))
+            }
+            other => other,
         }
     }
 
@@ -1888,13 +2008,8 @@ impl ProviderService {
                 }
             }
             AppType::OpenClaw => {
-                if !provider.settings_config.is_object() {
-                    return Err(AppError::localized(
-                        "provider.openclaw.settings.not_object",
-                        "OpenClaw 配置必须是 JSON 对象",
-                        "OpenClaw configuration must be a JSON object",
-                    ));
-                }
+                let config = Self::parse_openclaw_provider_settings(&provider.settings_config)?;
+                Self::validate_openclaw_provider_models(&provider.id, &config)?;
             }
         }
 

@@ -33,7 +33,6 @@ impl ProviderAddFormState {
         Self {
             app_type,
             mode: FormMode::Add,
-            sync_edit_to_live: true,
             focus: FormFocus::Templates,
             template_idx: 0,
             field_idx: 0,
@@ -82,19 +81,10 @@ impl ProviderAddFormState {
     }
 
     pub fn from_provider(app_type: AppType, provider: &Provider) -> Self {
-        Self::from_provider_with_live_sync(app_type, provider, true)
-    }
-
-    pub fn from_provider_with_live_sync(
-        app_type: AppType,
-        provider: &Provider,
-        sync_edit_to_live: bool,
-    ) -> Self {
         let mut form = Self::new(app_type.clone());
         form.mode = FormMode::Edit {
             id: provider.id.clone(),
         };
-        form.sync_edit_to_live = sync_edit_to_live;
         form.focus = FormFocus::Fields;
         form.extra = serde_json::to_value(provider).unwrap_or_else(|_| json!({}));
 
@@ -376,7 +366,6 @@ impl ProviderAddFormState {
         let previous_codex_auth_scroll = self.codex_auth_scroll;
         let previous_codex_config_scroll = self.codex_config_scroll;
         let previous_include_common_config = self.include_common_config;
-        let previous_sync_edit_to_live = self.sync_edit_to_live;
         let previous_extra = self.extra.clone();
 
         let mut next = Self::from_provider(self.app_type.clone(), provider);
@@ -401,7 +390,6 @@ impl ProviderAddFormState {
         next.codex_preview_section = previous_codex_preview_section;
         next.codex_auth_scroll = previous_codex_auth_scroll;
         next.codex_config_scroll = previous_codex_config_scroll;
-        next.sync_edit_to_live = previous_sync_edit_to_live;
         next.editing = false;
         let fields_len = next.fields().len();
         next.field_idx = if fields_len == 0 {
@@ -431,7 +419,6 @@ impl ProviderAddFormState {
         let previous_codex_auth_scroll = self.codex_auth_scroll;
         let previous_codex_config_scroll = self.codex_config_scroll;
         let previous_include_common_config = self.include_common_config;
-        let previous_sync_edit_to_live = self.sync_edit_to_live;
 
         let current_value = self.to_provider_json_value();
         if let (Some(current_obj), Some(edited_obj)) =
@@ -466,7 +453,6 @@ impl ProviderAddFormState {
         next.codex_preview_section = previous_codex_preview_section;
         next.codex_auth_scroll = previous_codex_auth_scroll;
         next.codex_config_scroll = previous_codex_config_scroll;
-        next.sync_edit_to_live = previous_sync_edit_to_live;
         next.editing = false;
 
         let fields_len = next.fields().len();

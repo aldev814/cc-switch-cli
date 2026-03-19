@@ -254,7 +254,11 @@ fn render_openclaw_config_section<T: Serialize>(
     }
 
     let section_json = section
-        .map(|section| serde_json::to_string_pretty(section).unwrap_or_else(|_| "{}".to_string()))
+        .map(|section| {
+            let section_value = serde_json::to_value(section).unwrap_or_else(|_| Value::Null);
+            let redacted = redact_sensitive_json(&section_value);
+            serde_json::to_string_pretty(&redacted).unwrap_or_else(|_| "{}".to_string())
+        })
         .unwrap_or_else(|| "null".to_string());
 
     if has_warnings {

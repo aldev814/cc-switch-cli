@@ -1559,7 +1559,7 @@ fn provider_add_form_openclaw_renaming_primary_model_to_existing_fallback_dedupl
 }
 
 #[test]
-fn provider_add_form_openclaw_roundtrip_rewrites_legacy_api_aliases() {
+fn provider_add_form_openclaw_ignores_legacy_api_aliases_when_loading() {
     let provider = Provider::with_id(
         "oclaw1".to_string(),
         "OpenClaw Provider".to_string(),
@@ -1574,27 +1574,90 @@ fn provider_add_form_openclaw_roundtrip_rewrites_legacy_api_aliases() {
     );
 
     let form = ProviderAddFormState::from_provider(AppType::OpenClaw, &provider);
-    assert_eq!(form.opencode_api_key.value, "sk-legacy-openclaw");
-    assert_eq!(
-        form.opencode_base_url.value,
-        "https://legacy.openclaw.example/v1"
-    );
+    assert!(form.opencode_api_key.value.is_empty());
+    assert!(form.opencode_base_url.value.is_empty());
 
     let roundtrip = form.to_provider_json_value();
-    assert_eq!(roundtrip["settingsConfig"]["apiKey"], "sk-legacy-openclaw");
-    assert_eq!(
-        roundtrip["settingsConfig"]["baseUrl"],
-        "https://legacy.openclaw.example/v1"
-    );
+    assert!(roundtrip["settingsConfig"].get("apiKey").is_none());
+    assert!(roundtrip["settingsConfig"].get("baseUrl").is_none());
     assert!(
         roundtrip["settingsConfig"].get("api_key").is_none(),
-        "saving OpenClaw providers should clean legacy api_key alias"
+        "saving OpenClaw providers should not preserve legacy api_key aliases"
     );
     assert!(
         roundtrip["settingsConfig"].get("base_url").is_none(),
-        "saving OpenClaw providers should clean legacy base_url alias"
+        "saving OpenClaw providers should not preserve legacy base_url aliases"
     );
     assert_eq!(roundtrip["settingsConfig"]["headers"]["X-Test"], "1");
+}
+
+#[test]
+fn provider_add_form_openclaw_ignores_legacy_context_window_alias_when_loading() {
+    let provider = Provider::with_id(
+        "oclaw1".to_string(),
+        "OpenClaw Provider".to_string(),
+        json!({
+            "api": "openai-completions",
+            "models": [
+                {
+                    "id": "primary-model",
+                    "name": "Primary Model",
+                    "context_window": 128000,
+                    "providerHint": "reasoning"
+                }
+            ]
+        }),
+        None,
+    );
+
+    let form = ProviderAddFormState::from_provider(AppType::OpenClaw, &provider);
+    assert_eq!(form.opencode_model_id.value, "primary-model");
+    assert!(form.opencode_model_context_limit.value.is_empty());
+
+    let roundtrip = form.to_provider_json_value();
+    assert!(
+        roundtrip["settingsConfig"]["models"][0]
+            .get("contextWindow")
+            .is_none(),
+        "OpenClaw form should not promote legacy context_window to canonical contextWindow"
+    );
+    assert!(
+        roundtrip["settingsConfig"]["models"][0]
+            .get("context_window")
+            .is_none(),
+        "OpenClaw form should not preserve legacy context_window aliases"
+    );
+    assert_eq!(
+        roundtrip["settingsConfig"]["models"][0]["providerHint"],
+        "reasoning"
+    );
+}
+
+#[test]
+fn provider_add_form_openclaw_does_not_coerce_opencode_models_object_shape() {
+    let provider = Provider::with_id(
+        "oclaw1".to_string(),
+        "OpenClaw Provider".to_string(),
+        json!({
+            "api": "openai-completions",
+            "models": {
+                "gpt-4.1-mini": {
+                    "name": "GPT 4.1 Mini"
+                }
+            }
+        }),
+        None,
+    );
+
+    let form = ProviderAddFormState::from_provider(AppType::OpenClaw, &provider);
+    assert!(form.openclaw_models.is_empty());
+    assert!(form.opencode_model_id.value.is_empty());
+
+    let roundtrip = form.to_provider_json_value();
+    assert!(
+        roundtrip["settingsConfig"].get("models").is_none(),
+        "OpenClaw form JSON should drop additive models objects instead of coercing them into a one-element array"
+    );
 }
 
 #[test]
