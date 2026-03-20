@@ -278,6 +278,39 @@ fn all_text(buf: &Buffer) -> String {
     all
 }
 
+fn spaces_before_substring(text: &str, needle: &str) -> usize {
+    let idx = text.find(needle).expect("substring should exist");
+    text.as_bytes()[..idx]
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b' ')
+        .count()
+}
+
+fn buffer_cell_text(text: &str) -> String {
+    let mut out = String::new();
+    for ch in text.chars() {
+        out.push(ch);
+        if unicode_width::UnicodeWidthChar::width(ch) == Some(2) {
+            out.push(' ');
+        }
+    }
+    out
+}
+
+fn visible_tab_labels(header: &str) -> usize {
+    [
+        AppType::Claude.as_str(),
+        AppType::Codex.as_str(),
+        AppType::Gemini.as_str(),
+        AppType::OpenCode.as_str(),
+        AppType::OpenClaw.as_str(),
+    ]
+    .into_iter()
+    .filter(|label| header.contains(label))
+    .count()
+}
+
 fn minimal_data(_app_type: &AppType) -> UiData {
     let provider = Provider::with_id(
         "p1".to_string(),
@@ -461,10 +494,169 @@ fn header_keeps_all_app_tabs_visible_with_proxy_chip() {
     let buf = render(&app, &minimal_data(&app.app_type));
     let header = line_at(&buf, 1);
 
+    assert!(header.contains(texts::tui_app_title()), "{header}");
     assert!(header.contains(AppType::Claude.as_str()), "{header}");
     assert!(header.contains(AppType::Codex.as_str()), "{header}");
     assert!(header.contains(AppType::Gemini.as_str()), "{header}");
     assert!(header.contains(AppType::OpenCode.as_str()), "{header}");
+    assert!(header.contains(AppType::OpenClaw.as_str()), "{header}");
+}
+
+#[test]
+fn header_centers_tabs_when_room_allows() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let app = App::new(Some(AppType::Claude));
+    let buf = render_with_size(&app, &minimal_data(&app.app_type), 140, 40);
+    let header = line_at(&buf, 1);
+    let title_idx = header
+        .find(texts::tui_app_title())
+        .expect("title should render");
+    let title_end = title_idx + texts::tui_app_title().len();
+    let proxy_idx = header
+        .find(texts::tui_header_proxy_status(false).as_str())
+        .expect("proxy badge should render");
+    let lane = &header[title_end..proxy_idx];
+    let first_label = lane
+        .find(AppType::Claude.as_str())
+        .expect("claude tab should render");
+    let last_label_end = lane
+        .rfind(AppType::OpenClaw.as_str())
+        .map(|idx| idx + AppType::OpenClaw.as_str().len())
+        .expect("openclaw tab should render");
+    let left_gap = first_label;
+    let right_gap = lane.len().saturating_sub(last_label_end);
+
+    assert!(
+        left_gap.abs_diff(right_gap) <= 2,
+        "expected tabs to stay centered inside the middle lane, got: {header}"
+    );
+}
+
+#[test]
+fn header_keeps_title_and_right_badges_visible_without_large_gap_in_chinese() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::Chinese);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let app = App::new(Some(AppType::Claude));
+    let mut data = minimal_data(&app.app_type);
+    data.providers.rows[0].is_current = true;
+
+    let buf = render_with_size(&app, &data, 96, 40);
+    let header = line_at(&buf, 1);
+    let proxy_label = buffer_cell_text(&texts::tui_header_proxy_status(false));
+    let provider_label = buffer_cell_text(&format!(
+        "{}: {}",
+        texts::provider_label().trim_end_matches([':', '：']),
+        "Demo Provider"
+    ));
+
+    assert!(header.contains(texts::tui_app_title()), "{header}");
+    assert!(header.contains(&proxy_label), "{header}");
+    assert!(header.contains(&provider_label), "{header}");
+    assert!(
+        spaces_before_substring(&header, &proxy_label) <= 6,
+        "expected proxy badge to stay near tabs without a fake blank block: {header}"
+    );
+}
+
+#[test]
+fn header_narrow_width_collapses_center_before_creating_fake_gap() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::Chinese);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let app = App::new(Some(AppType::Claude));
+    let buf = render_with_size(&app, &minimal_data(&app.app_type), 32, 20);
+    let header = line_at(&buf, 1);
+    let proxy_label = buffer_cell_text(&texts::tui_header_proxy_status(false));
+
+    assert!(header.contains(texts::tui_app_title()), "{header}");
+    assert!(header.contains(&proxy_label), "{header}");
+    assert!(
+        spaces_before_substring(&header, &proxy_label) <= 4,
+        "expected center tabs to collapse before a fake blank gap appears: {header}"
+    );
+}
+
+#[test]
+fn header_sacrifices_tabs_before_truncating_right_badges() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let app = App::new(Some(AppType::Claude));
+    let mut data = minimal_data(&app.app_type);
+    data.providers.rows[0].is_current = true;
+
+    let title_width = UnicodeWidthStr::width(format!("  {}", texts::tui_app_title()).as_str());
+    let proxy_badge_width =
+        UnicodeWidthStr::width(format!("  {}  ", texts::tui_header_proxy_status(false)).as_str());
+    let provider_badge_width = UnicodeWidthStr::width(
+        format!(
+            "  {}: {}  ",
+            texts::provider_label().trim_end_matches([':', '：']),
+            "Demo Provider"
+        )
+        .as_str(),
+    );
+    let total_width = (title_width + proxy_badge_width + 1 + provider_badge_width + 2) as u16;
+
+    let buf = render_with_size(&app, &data, total_width, 40);
+    let header = line_at(&buf, 1);
+    let proxy_label = texts::tui_header_proxy_status(false);
+    let provider_label = format!(
+        "{}: {}",
+        texts::provider_label().trim_end_matches([':', '：']),
+        "Demo Provider"
+    );
+
+    assert!(header.contains(texts::tui_app_title()), "{header}");
+    assert!(header.contains(&proxy_label), "{header}");
+    assert!(header.contains(&provider_label), "{header}");
+    assert_eq!(
+        visible_tab_labels(&header),
+        0,
+        "expected tabs to yield before right badges truncate: {header}"
+    );
+}
+
+#[test]
+fn header_keeps_proxy_visible_and_truncates_long_provider_name() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let app = App::new(Some(AppType::Claude));
+    let mut data = minimal_data(&app.app_type);
+    data.providers.rows[0].is_current = true;
+    data.providers.rows[0].provider = Provider::with_id(
+        "p1".to_string(),
+        "Demo Provider With An Extremely Long Name That Must Truncate Before It Hides The Proxy Badge"
+            .to_string(),
+        json!({}),
+        None,
+    );
+
+    let buf = render_with_size(&app, &data, 80, 40);
+    let header = line_at(&buf, 1);
+    let proxy_label = texts::tui_header_proxy_status(false);
+
+    assert!(header.contains(texts::tui_app_title()), "{header}");
+    assert!(header.contains(&proxy_label), "{header}");
+    assert!(header.contains("Provider:"), "{header}");
+    assert!(header.contains("Demo"), "{header}");
+    assert!(header.contains('…'), "{header}");
+    assert!(
+        !header.contains(
+            "Demo Provider With An Extremely Long Name That Must Truncate Before It Hides The Proxy Badge"
+        ),
+        "{header}"
+    );
+    assert!(
+        spaces_before_substring(&header, &proxy_label) <= 6,
+        "expected long provider names to truncate instead of reserving a fake gap: {header}"
+    );
 }
 
 #[test]

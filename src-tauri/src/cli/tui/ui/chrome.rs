@@ -9,17 +9,11 @@ pub(super) fn render_header(
     area: Rect,
     theme: &super::theme::Theme,
 ) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(12),
-            Constraint::Min(0),
-            Constraint::Max(60),
-        ])
-        .split(area);
+    let title_text = format!("  {}", texts::tui_app_title());
+    let title_width = UnicodeWidthStr::width(title_text.as_str()) as u16;
 
     let title = Paragraph::new(Line::from(vec![Span::styled(
-        format!("  {}", texts::tui_app_title()),
+        title_text,
         if theme.no_color {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
@@ -29,7 +23,6 @@ pub(super) fn render_header(
         },
     )]))
     .alignment(Alignment::Left);
-    frame.render_widget(title, chunks[0]);
 
     let selected = match app.app_type {
         AppType::Claude => 0,
@@ -84,8 +77,6 @@ pub(super) fn render_header(
             },
         ),
     ]);
-    let tabs = Paragraph::new(tabs_line).alignment(Alignment::Center);
-    frame.render_widget(tabs, chunks[1]);
 
     let current_provider = data
         .providers
@@ -102,6 +93,7 @@ pub(super) fn render_header(
 
     let proxy_text = texts::tui_header_proxy_status(current_app_routed);
     let proxy_badge = format!("  {proxy_text}  ");
+    let proxy_badge_width = UnicodeWidthStr::width(proxy_badge.as_str()) as u16;
     let proxy_style = if current_app_routed {
         selection_style(theme)
     } else if theme.no_color {
@@ -115,25 +107,71 @@ pub(super) fn render_header(
         strip_trailing_colon(texts::provider_label()),
         current_provider
     );
-    let proxy_badge_width = UnicodeWidthStr::width(proxy_badge.as_str()) as u16;
-    let provider_width = chunks[2]
-        .width
-        .saturating_sub(proxy_badge_width.saturating_add(5));
-    let provider_text = if provider_width == 0 {
-        String::new()
+    let available_after_title = area.width.saturating_sub(title_width);
+    let full_provider_badge = format!("  {provider_text_full}  ");
+    let full_provider_badge_width = UnicodeWidthStr::width(full_provider_badge.as_str()) as u16;
+    let full_right_width = proxy_badge_width + 1 + full_provider_badge_width;
+    let provider_badge = if full_right_width <= available_after_title {
+        full_provider_badge
     } else {
-        truncate_to_display_width(&provider_text_full, provider_width)
+        let provider_badge_budget =
+            available_after_title.saturating_sub(proxy_badge_width.saturating_add(1));
+        if provider_badge_budget >= 5 {
+            let provider_text = truncate_to_display_width(
+                &provider_text_full,
+                provider_badge_budget.saturating_sub(4),
+            );
+            format!("  {provider_text}  ")
+        } else {
+            String::new()
+        }
     };
-    let provider_badge = format!("  {provider_text}  ");
+    let provider_badge_width = UnicodeWidthStr::width(provider_badge.as_str()) as u16;
+    let right_width = proxy_badge_width
+        + if provider_badge.is_empty() {
+            0
+        } else {
+            1 + provider_badge_width
+        };
+
+    let title_area = Rect::new(area.x, area.y, title_width.min(area.width), area.height);
+    let right_x = area
+        .right()
+        .saturating_sub(right_width)
+        .max(title_area.right());
+    let right_area = Rect::new(
+        right_x,
+        area.y,
+        area.right().saturating_sub(right_x),
+        area.height,
+    );
+    let tabs_x = title_area.right();
+    let tabs_right = right_area.x;
+    let tabs_area = Rect::new(
+        tabs_x,
+        area.y,
+        tabs_right.saturating_sub(tabs_x),
+        area.height,
+    );
 
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(proxy_badge, proxy_style),
-            Span::raw(" "),
-            Span::styled(provider_badge, selection_style(theme)),
-        ]))
+        Paragraph::new(tabs_line).alignment(Alignment::Center),
+        tabs_area,
+    );
+    frame.render_widget(title, title_area);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(if provider_badge.is_empty() {
+            vec![Span::styled(proxy_badge, proxy_style)]
+        } else {
+            vec![
+                Span::styled(proxy_badge, proxy_style),
+                Span::raw(" "),
+                Span::styled(provider_badge, selection_style(theme)),
+            ]
+        }))
         .alignment(Alignment::Right),
-        chunks[2],
+        right_area,
     );
 }
 
