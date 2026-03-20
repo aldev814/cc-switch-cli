@@ -232,6 +232,10 @@ pub(crate) fn app_type_picker_index(app_type: &AppType) -> usize {
     }
 }
 
+pub(crate) fn four_app_picker_index(app_type: &AppType) -> usize {
+    app_type_picker_index(app_type).min(3)
+}
+
 pub(crate) fn app_type_for_picker_index(index: usize) -> AppType {
     match index {
         1 => AppType::Codex,

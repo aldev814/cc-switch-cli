@@ -55,9 +55,12 @@ pub(super) fn local_proxy_settings_item_label(item: &LocalProxySettingsItem) -> 
     }
 }
 
+pub(super) fn ordered_visible_app_types(apps: &crate::settings::VisibleApps) -> Vec<AppType> {
+    apps.ordered_enabled()
+}
+
 fn visible_apps_summary(apps: &crate::settings::VisibleApps) -> String {
-    let labels = apps
-        .ordered_enabled()
+    let labels = ordered_visible_app_types(apps)
         .into_iter()
         .map(|app_type| app_type.as_str().to_string())
         .collect::<Vec<_>>();

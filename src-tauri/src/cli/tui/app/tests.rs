@@ -189,6 +189,48 @@ mod tests {
     }
 
     #[test]
+    fn skills_apps_picker_from_openclaw_targets_opencode_last_visible_row() {
+        let mut app = App::new(Some(AppType::OpenClaw));
+        app.route = Route::Skills;
+        app.focus = Focus::Content;
+
+        let mut data = UiData::default();
+        data.skills
+            .installed
+            .push(crate::services::skill::InstalledSkill {
+                id: "local:hello-skill".to_string(),
+                name: "Hello Skill".to_string(),
+                description: None,
+                directory: "hello-skill".to_string(),
+                repo_owner: None,
+                repo_name: None,
+                repo_branch: None,
+                readme_url: None,
+                apps: crate::app_config::SkillApps::default(),
+                installed_at: 0,
+            });
+
+        let action = app.on_key(key(KeyCode::Char('m')), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            &app.overlay,
+            Overlay::SkillsAppsPicker { selected, .. } if *selected == 3
+        ));
+
+        let action = app.on_key(key(KeyCode::Char('x')), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            &app.overlay,
+            Overlay::SkillsAppsPicker { selected, apps, .. }
+                if *selected == 3
+                    && !apps.claude
+                    && !apps.codex
+                    && !apps.gemini
+                    && apps.opencode
+        ));
+    }
+
+    #[test]
     fn skills_d_opens_uninstall_confirm_from_list() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Skills;
@@ -1513,6 +1555,47 @@ mod tests {
             action,
             Action::McpSetApps { id, apps }
                 if id == "m1" && !apps.claude && !apps.codex && !apps.gemini && apps.opencode
+        ));
+    }
+
+    #[test]
+    fn mcp_apps_picker_from_openclaw_targets_opencode_last_visible_row() {
+        let mut app = App::new(Some(AppType::OpenClaw));
+        app.route = Route::Mcp;
+        app.focus = Focus::Content;
+
+        let mut data = UiData::default();
+        data.mcp.rows.push(super::super::data::McpRow {
+            id: "m1".to_string(),
+            server: crate::app_config::McpServer {
+                id: "m1".to_string(),
+                name: "Server".to_string(),
+                server: json!({}),
+                apps: crate::app_config::McpApps::default(),
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: vec![],
+            },
+        });
+
+        let action = app.on_key(key(KeyCode::Char('m')), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            &app.overlay,
+            Overlay::McpAppsPicker { selected, .. } if *selected == 3
+        ));
+
+        let action = app.on_key(key(KeyCode::Char('x')), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            &app.overlay,
+            Overlay::McpAppsPicker { selected, apps, .. }
+                if *selected == 3
+                    && !apps.claude
+                    && !apps.codex
+                    && !apps.gemini
+                    && apps.opencode
         ));
     }
 

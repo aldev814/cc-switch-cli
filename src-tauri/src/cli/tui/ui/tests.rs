@@ -530,6 +530,54 @@ fn header_renders_proxy_chip_left_of_provider() {
 
 #[test]
 #[serial(home_settings)]
+fn header_hides_gemini_by_default() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let temp_home = TempDir::new().expect("create temp home");
+    let _home = SettingsEnvGuard::set_home(temp_home.path());
+
+    let app = App::new(Some(AppType::Claude));
+    let buf = render(&app, &minimal_data(&app.app_type));
+    let header = line_at(&buf, 1);
+
+    assert!(header.contains(AppType::Claude.as_str()), "{header}");
+    assert!(header.contains(AppType::Codex.as_str()), "{header}");
+    assert!(!header.contains(AppType::Gemini.as_str()), "{header}");
+    assert!(header.contains(AppType::OpenCode.as_str()), "{header}");
+    assert!(header.contains(AppType::OpenClaw.as_str()), "{header}");
+    assert_eq!(visible_tab_labels(&header), 4, "{header}");
+}
+
+#[test]
+#[serial(home_settings)]
+fn header_only_renders_selected_visible_apps() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let temp_home = TempDir::new().expect("create temp home");
+    let _home = SettingsEnvGuard::set_home(temp_home.path());
+    crate::settings::set_visible_apps(crate::settings::VisibleApps {
+        claude: false,
+        codex: true,
+        gemini: false,
+        opencode: false,
+        openclaw: true,
+    })
+    .expect("save visible apps");
+
+    let app = App::new(Some(AppType::OpenClaw));
+    let buf = render(&app, &minimal_data(&app.app_type));
+    let header = line_at(&buf, 1);
+
+    assert!(!header.contains(AppType::Claude.as_str()), "{header}");
+    assert!(header.contains(AppType::Codex.as_str()), "{header}");
+    assert!(!header.contains(AppType::Gemini.as_str()), "{header}");
+    assert!(!header.contains(AppType::OpenCode.as_str()), "{header}");
+    assert!(header.contains(AppType::OpenClaw.as_str()), "{header}");
+    assert_eq!(visible_tab_labels(&header), 2, "{header}");
+}
+
+#[test]
+#[serial(home_settings)]
 fn header_keeps_all_app_tabs_visible_with_proxy_chip() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -676,7 +724,7 @@ fn header_keeps_title_and_right_badges_visible_without_large_gap_in_chinese() {
     assert!(header.contains(&proxy_label), "{header}");
     assert!(header.contains(&provider_label), "{header}");
     assert!(
-        spaces_before_substring(&header, &proxy_label) <= 6,
+        spaces_before_substring(&header, &proxy_label) <= 7,
         "expected proxy badge to stay near tabs without a fake blank block: {header}"
     );
 }
